@@ -59,6 +59,7 @@ private:
     juce::Slider rootNoteSlider;
     juce::ComboBox midiModeBox;
     MidiDragButton midiDragButton;
+    juce::MidiKeyboardComponent pianoKeyboard;
 
     juce::Label driveLabel;
     juce::Label releaseLabel;
