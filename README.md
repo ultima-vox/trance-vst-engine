@@ -102,3 +102,20 @@ The exported clip uses:
 - 16th-note step spacing
 
 Cubase can then place/import the MIDI clip into the project for normal piano-roll editing.
+
+
+## Psy bass controls
+
+The current psy-bass voice exposes automatable parameters for:
+
+- Drive
+- Pitch envelope amount
+- Pitch envelope time
+- Attack
+- Decay
+- Sustain
+- Release
+- Low-pass cutoff
+- Resonance
+
+These parameters are stored with the Cubase project through the plug-in state.
