@@ -1,0 +1,14 @@
+build/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+.idea/
+*.sln
+*.vcxproj*
+*.user
+.DS_Store
+Thumbs.db
+*.vst3
+*.component
+*.aaxplugin
