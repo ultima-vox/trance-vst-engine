@@ -12,3 +12,13 @@ Thumbs.db
 *.vst3
 *.component
 *.aaxplugin
+.grok/
+.codex/
+.cursor/
+.claude/
+.design-sync/
+.opencode/
+.qwen38-agent/
+/runners/
+frontend/app/dist/
+.gigacode_vsc/
