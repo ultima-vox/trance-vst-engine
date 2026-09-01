@@ -40,6 +40,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     buffer.clear();
 
     const auto incomingHasNotes = containsNoteEvents(midi);
+    const auto keyboardHasNotes = keyboardHasActiveNotes();
     const auto mode = currentMidiMode();
     const auto channel = juce::jlimit(
         1, 16,
@@ -52,7 +53,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     switch (mode) {
         case MidiSourceMode::autoDetect:
-            useGenerator = !incomingHasNotes;
+            useGenerator = !(incomingHasNotes || keyboardHasNotes);
             break;
         case MidiSourceMode::pianoRoll:
             useGenerator = false;
@@ -77,6 +78,15 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (useGenerator)
         addGeneratedMidi(midi, buffer.getNumSamples(), channel, rootNote);
 
+    for (const auto metadata : midi)
+        midiKeyboardState.processNextMidiEvent(metadata.getMessage());
+
+    juce::MidiBuffer keyboardMidi;
+    midiKeyboardState.processNextMidiBuffer(
+        keyboardMidi, 0, buffer.getNumSamples(), true);
+    midi.addEvents(
+        keyboardMidi, 0, buffer.getNumSamples(), 0);
+
     const auto drive = apvts.getRawParameterValue("drive")->load();
     const auto release = apvts.getRawParameterValue("release")->load();
 
@@ -97,6 +107,16 @@ bool VstEngineAudioProcessor::containsNoteEvents(
     for (const auto metadata : midi) {
         const auto message = metadata.getMessage();
         if (message.isNoteOnOrOff())
+            return true;
+    }
+
+    return false;
+}
+
+bool VstEngineAudioProcessor::keyboardHasActiveNotes() const noexcept
+{
+    for (int note = 0; note < 128; ++note) {
+        if (midiKeyboardState.isNoteOnForChannels(0xffff, note))
             return true;
     }
 
