@@ -2,7 +2,9 @@
 
 VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     VstEngineAudioProcessor& p)
-    : AudioProcessorEditor(&p), processor(p)
+    : AudioProcessorEditor(&p),
+      processor(p),
+      midiDragButton(p)
 {
     setSize(760, 470);
 
@@ -35,6 +37,10 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     midiModeBox.addItem("GENERATOR", 3);
     midiModeBox.addItem("BOTH", 4);
     addAndMakeVisible(midiModeBox);
+
+    midiDragButton.setTooltip(
+        "Drag the current generated pattern into Cubase as a MIDI clip.");
+    addAndMakeVisible(midiDragButton);
 
     driveLabel.setText("DRIVE", juce::dontSendNotification);
     releaseLabel.setText("RELEASE", juce::dontSendNotification);
@@ -86,7 +92,12 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.drawText(
         "Generator MIDI is exposed to the host for recording/routing.",
-        40, 421, getWidth() - 80, 24,
+        40, 410, getWidth() - 80, 24,
+        juce::Justification::centredLeft);
+
+    g.drawText(
+        "Drag exports the current 16-step pattern using the selected root/channel.",
+        40, 433, getWidth() - 80, 24,
         juce::Justification::centredLeft);
 }
 
@@ -108,6 +119,8 @@ void VstEngineAudioProcessorEditor::resized()
 
     releaseLabel.setBounds(455, 195, 150, 24);
     releaseSlider.setBounds(455, 219, 150, 150);
+
+    midiDragButton.setBounds(250, 365, 260, 34);
 }
 
 juce::AudioProcessorEditor*
