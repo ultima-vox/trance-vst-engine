@@ -88,3 +88,17 @@ The generated stream can be assigned to MIDI channels 1-16. This is the routing 
 A standard VST3 plug-in does not directly modify an existing Cubase piano-roll part. Generated notes are exposed as VST3 MIDI output so the host can route/record them to a MIDI track. Once recorded, switch VST Engine to **PIANO ROLL** or **AUTO** and edit the notes normally in Cubase.
 
 Planned next step: drag-and-drop MIDI clip export from the plug-in UI into the Cubase project.
+
+
+### Drag generated MIDI into Cubase
+
+The editor exposes **DRAG MIDI TO CUBASE**. Dragging it creates a Standard MIDI File from the current 16-step generator pattern and starts an external file drag operation.
+
+The exported clip uses:
+- the current generator pattern
+- the selected root note
+- the selected generator MIDI channel
+- 960 PPQ resolution
+- 16th-note step spacing
+
+Cubase can then place/import the MIDI clip into the project for normal piano-roll editing.

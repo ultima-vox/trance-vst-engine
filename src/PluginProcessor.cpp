@@ -212,6 +212,66 @@ VstEngineAudioProcessor::createParameterLayout()
     return { params.begin(), params.end() };
 }
 
+
+juce::File VstEngineAudioProcessor::createGeneratedMidiFile()
+{
+    constexpr int ticksPerQuarter = 960;
+    constexpr double ticksPerStep = ticksPerQuarter / 4.0;
+    constexpr double gateRatio = 0.62;
+
+    const auto channel = juce::jlimit(
+        1, 16,
+        static_cast<int>(apvts.getRawParameterValue("midiChannel")->load()));
+    const auto rootNote = juce::jlimit(
+        0, 127,
+        static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
+
+    juce::MidiMessageSequence sequence;
+
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+        const auto& step = pattern[i];
+
+        if (!step.gate)
+            continue;
+
+        const auto note = juce::jlimit(0, 127, rootNote + step.noteOffset);
+        const auto velocity = step.accent ? 0.95f : 0.72f;
+        const auto startTick = static_cast<double>(i) * ticksPerStep;
+        const auto endTick = startTick + ticksPerStep * gateRatio;
+
+        auto noteOn = juce::MidiMessage::noteOn(channel, note, velocity);
+        noteOn.setTimeStamp(startTick);
+        sequence.addEvent(noteOn);
+
+        auto noteOff = juce::MidiMessage::noteOff(channel, note);
+        noteOff.setTimeStamp(endTick);
+        sequence.addEvent(noteOff);
+    }
+
+    auto endOfTrack = juce::MidiMessage::endOfTrack();
+    endOfTrack.setTimeStamp(
+        static_cast<double>(pattern.size()) * ticksPerStep);
+    sequence.addEvent(endOfTrack);
+    sequence.updateMatchedPairs();
+
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote(ticksPerQuarter);
+    midiFile.addTrack(sequence);
+
+    const auto tempFile =
+        juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getChildFile("VST-Engine-Generated.mid");
+
+    tempFile.deleteFile();
+
+    if (auto stream = tempFile.createOutputStream()) {
+        if (midiFile.writeTo(*stream))
+            return tempFile;
+    }
+
+    return {};
+}
+
 void VstEngineAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())

@@ -39,6 +39,7 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState& parameters() noexcept { return apvts; }
+    juce::File createGeneratedMidiFile();
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

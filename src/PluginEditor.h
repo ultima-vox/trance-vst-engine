@@ -2,6 +2,46 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
+class MidiDragButton final : public juce::TextButton {
+public:
+    explicit MidiDragButton(VstEngineAudioProcessor& processorToUse)
+        : processor(processorToUse)
+    {
+        setButtonText("DRAG MIDI TO CUBASE");
+    }
+
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        dragStarted = false;
+        juce::TextButton::mouseDown(event);
+    }
+
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        juce::TextButton::mouseDrag(event);
+
+        if (dragStarted || event.getDistanceFromDragStart() < 6)
+            return;
+
+        const auto file = processor.createGeneratedMidiFile();
+
+        if (!file.existsAsFile())
+            return;
+
+        dragStarted = true;
+
+        juce::StringArray files;
+        files.add(file.getFullPathName());
+
+        juce::DragAndDropContainer::performExternalDragDropOfFiles(
+            files, false, this);
+    }
+
+private:
+    VstEngineAudioProcessor& processor;
+    bool dragStarted {};
+};
+
 class VstEngineAudioProcessorEditor final : public juce::AudioProcessorEditor {
 public:
     explicit VstEngineAudioProcessorEditor(VstEngineAudioProcessor&);
@@ -18,6 +58,7 @@ private:
     juce::Slider midiChannelSlider;
     juce::Slider rootNoteSlider;
     juce::ComboBox midiModeBox;
+    MidiDragButton midiDragButton;
 
     juce::Label driveLabel;
     juce::Label releaseLabel;
