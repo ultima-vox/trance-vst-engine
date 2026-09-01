@@ -88,13 +88,22 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         keyboardMidi, 0, buffer.getNumSamples(), 0);
 
     const auto drive = apvts.getRawParameterValue("drive")->load();
+    const auto pitchEnvAmount = apvts.getRawParameterValue("pitchEnvAmount")->load();
+    const auto pitchEnvTime = apvts.getRawParameterValue("pitchEnvTime")->load();
+    const auto attack = apvts.getRawParameterValue("attack")->load();
+    const auto decay = apvts.getRawParameterValue("decay")->load();
+    const auto sustain = apvts.getRawParameterValue("sustain")->load();
     const auto release = apvts.getRawParameterValue("release")->load();
+    const auto cutoff = apvts.getRawParameterValue("cutoff")->load();
+    const auto resonance = apvts.getRawParameterValue("resonance")->load();
 
     for (int i = 0; i < synth.getNumVoices(); ++i) {
         if (auto* voice =
                 dynamic_cast<vstengine::dsp::PsyBassVoice*>(synth.getVoice(i))) {
             voice->setDrive(drive);
-            voice->setRelease(release);
+            voice->setPitchEnvelope(pitchEnvAmount, pitchEnvTime);
+            voice->setAmpEnvelope(attack, decay, sustain, release);
+            voice->setFilter(cutoff, resonance);
         }
     }
 
@@ -209,9 +218,43 @@ VstEngineAudioProcessor::createParameterLayout()
         juce::NormalisableRange<float> { 1.0f, 6.0f, 0.01f }, 1.8f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "pitchEnvAmount", 1 }, "Pitch Env Amount",
+        juce::NormalisableRange<float> { 0.0f, 36.0f, 0.1f }, 12.0f, "st"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "pitchEnvTime", 1 }, "Pitch Env Time",
+        juce::NormalisableRange<float> { 0.001f, 0.120f, 0.001f, 0.45f },
+        0.018f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "attack", 1 }, "Attack",
+        juce::NormalisableRange<float> { 0.0005f, 0.100f, 0.0005f, 0.5f },
+        0.001f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "decay", 1 }, "Decay",
+        juce::NormalisableRange<float> { 0.005f, 0.300f, 0.001f, 0.5f },
+        0.055f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "sustain", 1 }, "Sustain",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f },
+        0.72f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "release", 1 }, "Release",
-        juce::NormalisableRange<float> { 0.005f, 0.250f, 0.001f, 0.5f },
+        juce::NormalisableRange<float> { 0.005f, 0.300f, 0.001f, 0.5f },
         0.035f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "cutoff", 1 }, "Cutoff",
+        juce::NormalisableRange<float> { 80.0f, 12000.0f, 1.0f, 0.25f },
+        1800.0f, "Hz"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "resonance", 1 }, "Resonance",
+        juce::NormalisableRange<float> { 0.25f, 8.0f, 0.01f, 0.5f },
+        0.80f));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "midiMode", 1 },
