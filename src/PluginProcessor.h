@@ -39,6 +39,7 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState& parameters() noexcept { return apvts; }
+    juce::MidiKeyboardState& keyboardState() noexcept { return midiKeyboardState; }
     juce::File createGeneratedMidiFile();
 
 private:
@@ -46,8 +47,10 @@ private:
     void addGeneratedMidi(juce::MidiBuffer& midi, int numSamples, int channel, int rootNote);
     static bool containsNoteEvents(const juce::MidiBuffer& midi) noexcept;
     MidiSourceMode currentMidiMode() const noexcept;
+    bool keyboardHasActiveNotes() const noexcept;
 
     juce::Synthesiser synth;
+    juce::MidiKeyboardState midiKeyboardState;
     juce::AudioProcessorValueTreeState apvts;
     vstengine::generator::Pattern pattern;
 
