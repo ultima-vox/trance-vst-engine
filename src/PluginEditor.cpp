@@ -4,7 +4,7 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     VstEngineAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
-    setSize(620, 360);
+    setSize(760, 470);
 
     titleLabel.setText(
         "VST ENGINE  /  DARK PSY CORE",
@@ -23,10 +23,28 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         addAndMakeVisible(slider);
     }
 
+    for (auto* slider : { &midiChannelSlider, &rootNoteSlider }) {
+        slider->setSliderStyle(juce::Slider::IncDecButtons);
+        slider->setTextBoxStyle(
+            juce::Slider::TextBoxLeft, false, 72, 24);
+        addAndMakeVisible(slider);
+    }
+
+    midiModeBox.addItem("AUTO", 1);
+    midiModeBox.addItem("PIANO ROLL", 2);
+    midiModeBox.addItem("GENERATOR", 3);
+    midiModeBox.addItem("BOTH", 4);
+    addAndMakeVisible(midiModeBox);
+
     driveLabel.setText("DRIVE", juce::dontSendNotification);
     releaseLabel.setText("RELEASE", juce::dontSendNotification);
+    midiModeLabel.setText("MIDI SOURCE", juce::dontSendNotification);
+    midiChannelLabel.setText("GEN MIDI CH", juce::dontSendNotification);
+    rootNoteLabel.setText("ROOT NOTE", juce::dontSendNotification);
 
-    for (auto* label : { &driveLabel, &releaseLabel }) {
+    for (auto* label : {
+             &driveLabel, &releaseLabel, &midiModeLabel,
+             &midiChannelLabel, &rootNoteLabel }) {
         label->setJustificationType(
             juce::Justification::centred);
         addAndMakeVisible(label);
@@ -36,6 +54,12 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         processor.parameters(), "drive", driveSlider);
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.parameters(), "release", releaseSlider);
+    midiChannelAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "midiChannel", midiChannelSlider);
+    rootNoteAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "rootNote", rootNoteSlider);
+    midiModeAttachment = std::make_unique<ComboBoxAttachment>(
+        processor.parameters(), "midiMode", midiModeBox);
 }
 
 void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
@@ -56,8 +80,13 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colours::white.withAlpha(0.55f));
     g.setFont(14.0f);
     g.drawText(
-        "Host-synced 16-step rolling bass generator / prototype 0.1",
-        34, 294, getWidth() - 68, 30,
+        "AUTO: piano roll wins when MIDI notes are present; otherwise generator",
+        40, 398, getWidth() - 80, 24,
+        juce::Justification::centredLeft);
+
+    g.drawText(
+        "Generator MIDI is exposed to the host for recording/routing.",
+        40, 421, getWidth() - 80, 24,
         juce::Justification::centredLeft);
 }
 
@@ -65,11 +94,20 @@ void VstEngineAudioProcessorEditor::resized()
 {
     titleLabel.setBounds(34, 32, getWidth() - 68, 32);
 
-    driveLabel.setBounds(100, 102, 150, 24);
-    driveSlider.setBounds(100, 126, 150, 150);
+    midiModeLabel.setBounds(55, 100, 210, 24);
+    midiModeBox.setBounds(55, 128, 210, 32);
 
-    releaseLabel.setBounds(370, 102, 150, 24);
-    releaseSlider.setBounds(370, 126, 150, 150);
+    midiChannelLabel.setBounds(290, 100, 155, 24);
+    midiChannelSlider.setBounds(305, 128, 125, 32);
+
+    rootNoteLabel.setBounds(480, 100, 155, 24);
+    rootNoteSlider.setBounds(495, 128, 125, 32);
+
+    driveLabel.setBounds(150, 195, 150, 24);
+    driveSlider.setBounds(150, 219, 150, 150);
+
+    releaseLabel.setBounds(455, 195, 150, 24);
+    releaseSlider.setBounds(455, 219, 150, 150);
 }
 
 juce::AudioProcessorEditor*
