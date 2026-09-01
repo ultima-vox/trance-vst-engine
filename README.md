@@ -70,3 +70,21 @@ Planned engines:
 ## Design rule
 
 Generation must remain **musically constrained**. Randomization is not allowed to become unconstrained noise: groove, scale, phrase structure and genre-specific rhythm rules are explicit parts of the generator.
+
+
+## MIDI / Cubase workflow
+
+VST Engine supports four MIDI source modes:
+
+- **AUTO** — if the host sends note events, the piano-roll MIDI is used; otherwise the internal generator is used.
+- **PIANO ROLL** — only incoming host MIDI is used.
+- **GENERATOR** — only VST Engine's generated MIDI is used.
+- **BOTH** — incoming host MIDI and generated MIDI are combined.
+
+The generated stream can be assigned to MIDI channels 1-16. This is the routing foundation for future multitimbral Parts.
+
+### Recording generated MIDI into Cubase
+
+A standard VST3 plug-in does not directly modify an existing Cubase piano-roll part. Generated notes are exposed as VST3 MIDI output so the host can route/record them to a MIDI track. Once recorded, switch VST Engine to **PIANO ROLL** or **AUTO** and edit the notes normally in Cubase.
+
+Planned next step: drag-and-drop MIDI clip export from the plug-in UI into the Cubase project.

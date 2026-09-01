@@ -11,6 +11,7 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
 {
     for (int i = 0; i < 4; ++i)
         synth.addVoice(new vstengine::dsp::PsyBassVoice());
+
     synth.addSound(new vstengine::dsp::PsyBassSound());
 }
 
@@ -20,6 +21,7 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate, const int)
     synth.setCurrentPlaybackSampleRate(sampleRate);
     currentStep = 0;
     heldNote = -1;
+    heldChannel = 1;
     samplesUntilNextStep = 0.0;
     samplesUntilNoteOff = -1.0;
 }
@@ -37,7 +39,43 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    addGeneratedMidi(midi, buffer.getNumSamples());
+    const auto incomingHasNotes = containsNoteEvents(midi);
+    const auto mode = currentMidiMode();
+    const auto channel = juce::jlimit(
+        1, 16,
+        static_cast<int>(apvts.getRawParameterValue("midiChannel")->load()));
+    const auto rootNote = juce::jlimit(
+        0, 127,
+        static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
+
+    bool useGenerator = false;
+
+    switch (mode) {
+        case MidiSourceMode::autoDetect:
+            useGenerator = !incomingHasNotes;
+            break;
+        case MidiSourceMode::pianoRoll:
+            useGenerator = false;
+            break;
+        case MidiSourceMode::generator:
+            midi.clear();
+            useGenerator = true;
+            break;
+        case MidiSourceMode::both:
+            useGenerator = true;
+            break;
+    }
+
+    if (!useGenerator && heldNote >= 0) {
+        midi.addEvent(
+            juce::MidiMessage::noteOff(heldChannel, heldNote), 0);
+        heldNote = -1;
+        samplesUntilNoteOff = -1.0;
+        samplesUntilNextStep = 0.0;
+    }
+
+    if (useGenerator)
+        addGeneratedMidi(midi, buffer.getNumSamples(), channel, rootNote);
 
     const auto drive = apvts.getRawParameterValue("drive")->load();
     const auto release = apvts.getRawParameterValue("release")->load();
@@ -53,8 +91,30 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     synth.renderNextBlock(buffer, midi, 0, buffer.getNumSamples());
 }
 
+bool VstEngineAudioProcessor::containsNoteEvents(
+    const juce::MidiBuffer& midi) noexcept
+{
+    for (const auto metadata : midi) {
+        const auto message = metadata.getMessage();
+        if (message.isNoteOnOrOff())
+            return true;
+    }
+
+    return false;
+}
+
+VstEngineAudioProcessor::MidiSourceMode
+VstEngineAudioProcessor::currentMidiMode() const noexcept
+{
+    const auto raw = apvts.getRawParameterValue("midiMode")->load();
+    const auto index = juce::jlimit(0, 3, static_cast<int>(std::lround(raw)));
+    return static_cast<MidiSourceMode>(index);
+}
+
 void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
-                                                const int numSamples)
+                                                const int numSamples,
+                                                const int channel,
+                                                const int rootNote)
 {
     double bpm = 145.0;
     bool playing = true;
@@ -69,7 +129,9 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
 
     if (!playing) {
         if (heldNote >= 0)
-            midi.addEvent(juce::MidiMessage::noteOff(1, heldNote), 0);
+            midi.addEvent(
+                juce::MidiMessage::noteOff(heldChannel, heldNote), 0);
+
         heldNote = -1;
         samplesUntilNoteOff = -1.0;
         samplesUntilNextStep = 0.0;
@@ -83,23 +145,30 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
     for (int offset = 0; offset < numSamples; ++offset) {
         if (samplesUntilNoteOff >= 0.0) {
             samplesUntilNoteOff -= 1.0;
+
             if (samplesUntilNoteOff <= 0.0 && heldNote >= 0) {
-                midi.addEvent(juce::MidiMessage::noteOff(1, heldNote), offset);
+                midi.addEvent(
+                    juce::MidiMessage::noteOff(heldChannel, heldNote), offset);
                 heldNote = -1;
                 samplesUntilNoteOff = -1.0;
             }
         }
 
         samplesUntilNextStep -= 1.0;
+
         if (samplesUntilNextStep <= 0.0) {
             const auto& step = pattern[static_cast<std::size_t>(currentStep)];
 
             if (step.gate) {
-                constexpr int rootNote = 36;
-                heldNote = rootNote + step.noteOffset;
+                heldChannel = channel;
+                heldNote = juce::jlimit(0, 127, rootNote + step.noteOffset);
                 const auto velocity = step.accent ? 0.95f : 0.72f;
+
                 midi.addEvent(
-                    juce::MidiMessage::noteOn(1, heldNote, velocity), offset);
+                    juce::MidiMessage::noteOn(
+                        heldChannel, heldNote, velocity),
+                    offset);
+
                 samplesUntilNoteOff = samplesPerStep * 0.62;
             }
 
@@ -123,6 +192,22 @@ VstEngineAudioProcessor::createParameterLayout()
         juce::ParameterID { "release", 1 }, "Release",
         juce::NormalisableRange<float> { 0.005f, 0.250f, 0.001f, 0.5f },
         0.035f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "midiMode", 1 },
+        "MIDI Source",
+        juce::StringArray { "Auto", "Piano Roll", "Generator", "Both" },
+        0));
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { "midiChannel", 1 },
+        "Generator MIDI Channel",
+        1, 16, 1));
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { "rootNote", 1 },
+        "Generator Root Note",
+        24, 60, 36));
 
     return { params.begin(), params.end() };
 }

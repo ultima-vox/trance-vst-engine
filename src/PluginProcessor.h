@@ -5,6 +5,13 @@
 
 class VstEngineAudioProcessor final : public juce::AudioProcessor {
 public:
+    enum class MidiSourceMode : int {
+        autoDetect = 0,
+        pianoRoll,
+        generator,
+        both
+    };
+
     VstEngineAudioProcessor();
     ~VstEngineAudioProcessor() override = default;
 
@@ -18,7 +25,7 @@ public:
 
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
+    bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.1; }
 
@@ -35,7 +42,9 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void addGeneratedMidi(juce::MidiBuffer& midi, int numSamples);
+    void addGeneratedMidi(juce::MidiBuffer& midi, int numSamples, int channel, int rootNote);
+    static bool containsNoteEvents(const juce::MidiBuffer& midi) noexcept;
+    MidiSourceMode currentMidiMode() const noexcept;
 
     juce::Synthesiser synth;
     juce::AudioProcessorValueTreeState apvts;
@@ -43,6 +52,7 @@ private:
 
     int currentStep {};
     int heldNote { -1 };
+    int heldChannel { 1 };
     double samplesUntilNextStep {};
     double samplesUntilNoteOff { -1.0 };
     double currentSampleRate { 44100.0 };
