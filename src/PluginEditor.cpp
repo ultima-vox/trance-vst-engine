@@ -9,7 +9,7 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
           p.keyboardState(),
           juce::MidiKeyboardComponent::horizontalKeyboard)
 {
-    setSize(760, 590);
+    setSize(980, 690);
 
     titleLabel.setText(
         "VST ENGINE  /  DARK PSY CORE",
@@ -20,12 +20,16 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         juce::Justification::centredLeft);
     addAndMakeVisible(titleLabel);
 
-    for (auto* slider : { &driveSlider, &releaseSlider }) {
-        slider->setSliderStyle(
-            juce::Slider::RotaryHorizontalVerticalDrag);
-        slider->setTextBoxStyle(
-            juce::Slider::TextBoxBelow, false, 88, 24);
-        addAndMakeVisible(slider);
+    bassSectionLabel.setText("PSY BASS ENGINE", juce::dontSendNotification);
+    bassSectionLabel.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+    bassSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(bassSectionLabel);
+
+    for (auto* slider : {
+             &driveSlider, &pitchEnvAmountSlider, &pitchEnvTimeSlider,
+             &attackSlider, &decaySlider, &sustainSlider, &releaseSlider,
+             &cutoffSlider, &resonanceSlider }) {
+        configureRotary(*slider);
     }
 
     for (auto* slider : { &midiChannelSlider, &rootNoteSlider }) {
@@ -51,30 +55,61 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     pianoKeyboard.setScrollButtonsVisible(false);
     addAndMakeVisible(pianoKeyboard);
 
-    driveLabel.setText("DRIVE", juce::dontSendNotification);
-    releaseLabel.setText("RELEASE", juce::dontSendNotification);
-    midiModeLabel.setText("MIDI SOURCE", juce::dontSendNotification);
-    midiChannelLabel.setText("GEN MIDI CH", juce::dontSendNotification);
-    rootNoteLabel.setText("ROOT NOTE", juce::dontSendNotification);
-
-    for (auto* label : {
-             &driveLabel, &releaseLabel, &midiModeLabel,
-             &midiChannelLabel, &rootNoteLabel }) {
-        label->setJustificationType(
-            juce::Justification::centred);
-        addAndMakeVisible(label);
-    }
+    configureLabel(driveLabel, "DRIVE");
+    configureLabel(pitchEnvAmountLabel, "PITCH ENV");
+    configureLabel(pitchEnvTimeLabel, "PITCH TIME");
+    configureLabel(attackLabel, "ATTACK");
+    configureLabel(decayLabel, "DECAY");
+    configureLabel(sustainLabel, "SUSTAIN");
+    configureLabel(releaseLabel, "RELEASE");
+    configureLabel(cutoffLabel, "CUTOFF");
+    configureLabel(resonanceLabel, "RESONANCE");
+    configureLabel(midiModeLabel, "MIDI SOURCE");
+    configureLabel(midiChannelLabel, "GEN MIDI CH");
+    configureLabel(rootNoteLabel, "ROOT NOTE");
 
     driveAttachment = std::make_unique<SliderAttachment>(
         processor.parameters(), "drive", driveSlider);
+    pitchEnvAmountAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "pitchEnvAmount", pitchEnvAmountSlider);
+    pitchEnvTimeAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "pitchEnvTime", pitchEnvTimeSlider);
+    attackAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "attack", attackSlider);
+    decayAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "decay", decaySlider);
+    sustainAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "sustain", sustainSlider);
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.parameters(), "release", releaseSlider);
+    cutoffAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "cutoff", cutoffSlider);
+    resonanceAttachment = std::make_unique<SliderAttachment>(
+        processor.parameters(), "resonance", resonanceSlider);
     midiChannelAttachment = std::make_unique<SliderAttachment>(
         processor.parameters(), "midiChannel", midiChannelSlider);
     rootNoteAttachment = std::make_unique<SliderAttachment>(
         processor.parameters(), "rootNote", rootNoteSlider);
     midiModeAttachment = std::make_unique<ComboBoxAttachment>(
         processor.parameters(), "midiMode", midiModeBox);
+}
+
+void VstEngineAudioProcessorEditor::configureRotary(juce::Slider& slider)
+{
+    slider.setSliderStyle(
+        juce::Slider::RotaryHorizontalVerticalDrag);
+    slider.setTextBoxStyle(
+        juce::Slider::TextBoxBelow, false, 82, 22);
+    addAndMakeVisible(slider);
+}
+
+void VstEngineAudioProcessorEditor::configureLabel(
+    juce::Label& label,
+    const juce::String& text)
+{
+    label.setText(text, juce::dontSendNotification);
+    label.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(label);
 }
 
 void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
@@ -91,22 +126,16 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
         24.0f, 76.0f,
         static_cast<float>(getWidth() - 24),
         76.0f, 1.0f);
+    g.drawLine(
+        40.0f, 190.0f,
+        static_cast<float>(getWidth() - 40),
+        190.0f, 1.0f);
 
     g.setColour(juce::Colours::white.withAlpha(0.55f));
-    g.setFont(14.0f);
+    g.setFont(13.0f);
     g.drawText(
-        "AUTO: piano roll wins when MIDI notes are present; otherwise generator",
-        40, 505, getWidth() - 80, 24,
-        juce::Justification::centredLeft);
-
-    g.drawText(
-        "Generator MIDI is exposed to the host for recording/routing.",
-        40, 528, getWidth() - 80, 24,
-        juce::Justification::centredLeft);
-
-    g.drawText(
-        "Drag exports the current 16-step pattern using the selected root/channel.",
-        40, 551, getWidth() - 80, 24,
+        "Mouse keyboard, Cubase MIDI and generator share the same synth engine.",
+        40, 648, getWidth() - 80, 22,
         juce::Justification::centredLeft);
 }
 
@@ -114,23 +143,50 @@ void VstEngineAudioProcessorEditor::resized()
 {
     titleLabel.setBounds(34, 32, getWidth() - 68, 32);
 
-    midiModeLabel.setBounds(55, 100, 210, 24);
-    midiModeBox.setBounds(55, 128, 210, 32);
+    midiModeLabel.setBounds(50, 96, 210, 22);
+    midiModeBox.setBounds(50, 122, 210, 32);
 
-    midiChannelLabel.setBounds(290, 100, 155, 24);
-    midiChannelSlider.setBounds(305, 128, 125, 32);
+    midiChannelLabel.setBounds(305, 96, 150, 22);
+    midiChannelSlider.setBounds(318, 122, 124, 32);
 
-    rootNoteLabel.setBounds(480, 100, 155, 24);
-    rootNoteSlider.setBounds(495, 128, 125, 32);
+    rootNoteLabel.setBounds(500, 96, 150, 22);
+    rootNoteSlider.setBounds(513, 122, 124, 32);
 
-    driveLabel.setBounds(150, 195, 150, 24);
-    driveSlider.setBounds(150, 219, 150, 150);
+    midiDragButton.setBounds(705, 118, 220, 36);
 
-    releaseLabel.setBounds(455, 195, 150, 24);
-    releaseSlider.setBounds(455, 219, 150, 150);
+    bassSectionLabel.setBounds(45, 160, 240, 24);
 
-    midiDragButton.setBounds(250, 365, 260, 34);
-    pianoKeyboard.setBounds(40, 415, getWidth() - 80, 78);
+    const int topY = 220;
+    const int bottomY = 360;
+    const int knobW = 110;
+    const int knobH = 112;
+    const int labelH = 22;
+
+    struct KnobLayout {
+        juce::Slider* slider;
+        juce::Label* label;
+        int x;
+        int y;
+    };
+
+    const KnobLayout knobs[] = {
+        { &driveSlider, &driveLabel, 45, topY },
+        { &pitchEnvAmountSlider, &pitchEnvAmountLabel, 175, topY },
+        { &pitchEnvTimeSlider, &pitchEnvTimeLabel, 305, topY },
+        { &cutoffSlider, &cutoffLabel, 435, topY },
+        { &resonanceSlider, &resonanceLabel, 565, topY },
+        { &attackSlider, &attackLabel, 110, bottomY },
+        { &decaySlider, &decayLabel, 250, bottomY },
+        { &sustainSlider, &sustainLabel, 390, bottomY },
+        { &releaseSlider, &releaseLabel, 530, bottomY }
+    };
+
+    for (const auto& item : knobs) {
+        item.label->setBounds(item.x, item.y, knobW, labelH);
+        item.slider->setBounds(item.x, item.y + labelH, knobW, knobH);
+    }
+
+    pianoKeyboard.setBounds(40, 525, getWidth() - 80, 105);
 }
 
 juce::AudioProcessorEditor*
