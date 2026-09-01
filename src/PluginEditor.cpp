@@ -4,9 +4,12 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     VstEngineAudioProcessor& p)
     : AudioProcessorEditor(&p),
       processor(p),
-      midiDragButton(p)
+      midiDragButton(p),
+      pianoKeyboard(
+          p.keyboardState(),
+          juce::MidiKeyboardComponent::horizontalKeyboard)
 {
-    setSize(760, 470);
+    setSize(760, 590);
 
     titleLabel.setText(
         "VST ENGINE  /  DARK PSY CORE",
@@ -41,6 +44,12 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     midiDragButton.setTooltip(
         "Drag the current generated pattern into Cubase as a MIDI clip.");
     addAndMakeVisible(midiDragButton);
+
+    pianoKeyboard.setAvailableRange(24, 84);
+    pianoKeyboard.setLowestVisibleKey(24);
+    pianoKeyboard.setKeyWidth(18.0f);
+    pianoKeyboard.setScrollButtonsVisible(false);
+    addAndMakeVisible(pianoKeyboard);
 
     driveLabel.setText("DRIVE", juce::dontSendNotification);
     releaseLabel.setText("RELEASE", juce::dontSendNotification);
@@ -87,17 +96,17 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(14.0f);
     g.drawText(
         "AUTO: piano roll wins when MIDI notes are present; otherwise generator",
-        40, 398, getWidth() - 80, 24,
+        40, 505, getWidth() - 80, 24,
         juce::Justification::centredLeft);
 
     g.drawText(
         "Generator MIDI is exposed to the host for recording/routing.",
-        40, 410, getWidth() - 80, 24,
+        40, 528, getWidth() - 80, 24,
         juce::Justification::centredLeft);
 
     g.drawText(
         "Drag exports the current 16-step pattern using the selected root/channel.",
-        40, 433, getWidth() - 80, 24,
+        40, 551, getWidth() - 80, 24,
         juce::Justification::centredLeft);
 }
 
@@ -121,6 +130,7 @@ void VstEngineAudioProcessorEditor::resized()
     releaseSlider.setBounds(455, 219, 150, 150);
 
     midiDragButton.setBounds(250, 365, 260, 34);
+    pianoKeyboard.setBounds(40, 415, getWidth() - 80, 78);
 }
 
 juce::AudioProcessorEditor*
