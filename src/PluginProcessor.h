@@ -52,6 +52,7 @@ private:
 
     int currentStep {};
     int heldNote { -1 };
+    int heldChannel { 1 };
     double samplesUntilNextStep {};
     double samplesUntilNoteOff { -1.0 };
     double currentSampleRate { 44100.0 };
