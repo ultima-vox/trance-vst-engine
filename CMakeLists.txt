@@ -25,6 +25,8 @@ juce_add_plugin(VstEngine
   COPY_PLUGIN_AFTER_BUILD FALSE
   VST3_CATEGORIES "Instrument" "Synth")
 
+juce_generate_juce_header(VstEngine)
+
 target_sources(VstEngine PRIVATE
   src/PluginProcessor.cpp src/PluginProcessor.h
   src/PluginEditor.cpp src/PluginEditor.h
