@@ -31,7 +31,11 @@ target_sources(VstEngine PRIVATE
   src/PluginProcessor.cpp src/PluginProcessor.h
   src/PluginEditor.cpp src/PluginEditor.h
   src/dsp/PsyBassVoice.cpp src/dsp/PsyBassVoice.h
-  src/generator/PatternGenerator.cpp src/generator/PatternGenerator.h)
+  src/export/MidiExport.cpp src/export/MidiExport.h
+  src/generator/PatternGenerator.cpp src/generator/PatternGenerator.h
+  src/generator/Sequence.cpp src/generator/Sequence.h
+  src/gui/StepSequencer.cpp src/gui/StepSequencer.h
+  src/preset/PresetManager.cpp src/preset/PresetManager.h)
 
 target_compile_definitions(VstEngine PUBLIC
   JUCE_WEB_BROWSER=0
@@ -52,3 +56,25 @@ add_executable(pattern_generator_tests
   src/generator/PatternGenerator.cpp)
 target_include_directories(pattern_generator_tests PRIVATE src)
 add_test(NAME pattern_generator_tests COMMAND pattern_generator_tests)
+
+add_executable(sequence_tests
+  tests/SequenceTests.cpp
+  src/generator/Sequence.cpp)
+target_include_directories(sequence_tests PRIVATE src)
+target_link_libraries(sequence_tests PRIVATE juce::juce_audio_basics)
+add_test(NAME sequence_tests COMMAND sequence_tests)
+
+add_executable(midi_export_tests
+  tests/MidiExportTests.cpp
+  src/export/MidiExport.cpp
+  src/generator/Sequence.cpp)
+target_include_directories(midi_export_tests PRIVATE src)
+target_link_libraries(midi_export_tests PRIVATE juce::juce_audio_basics)
+add_test(NAME midi_export_tests COMMAND midi_export_tests)
+
+add_executable(psy_bass_voice_tests
+  tests/PsyBassVoiceTests.cpp
+  src/dsp/PsyBassVoice.cpp)
+target_include_directories(psy_bass_voice_tests PRIVATE src)
+target_link_libraries(psy_bass_voice_tests PRIVATE juce::juce_audio_basics juce::juce_audio_processors juce::juce_graphics)
+add_test(NAME psy_bass_voice_tests COMMAND psy_bass_voice_tests)

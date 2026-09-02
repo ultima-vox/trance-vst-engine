@@ -1,0 +1,21 @@
+{
+  "task": "verify-pr13-vs-issue11-phases0-4",
+  "branch": "feat/issue-11-core-phases",
+  "commit": "a483a84",
+  "pr": 13,
+  "issue": 11,
+  "packets": {
+    "A": { "status": "pass", "result": "No allocation/locks/IO in audio path" },
+    "B": { "status": "pass", "result": "unique_ptr ownership, no leaks" },
+    "C": { "status": "pass", "result": "Canonical helper used by playback+export, all 4 modes tested" },
+    "D": { "status": "pass", "result": "Ratchet in realtime+export, clamped [1,8], no stuck notes" },
+    "E": { "status": "pass", "result": "Legato glide + pitch-bend ramp, monophonic deterministic" },
+    "F": { "status": "pass", "result": "splitmix32 instance RNG, no std::rand, seed param" },
+    "G": { "status": "pass", "result": "Sound/Full separation, 5 factory names exact" },
+    "H": { "status": "pass", "result": "Version dispatch, fail-safe corruption, round-trip tests" },
+    "I": { "status": "pass", "result": "Build clean, 4/4 ctest, VST3 produced" },
+    "J": { "status": "pass", "result": "No TODOs, no std::rand, no dead controls" }
+  },
+  "integration": "All packets pass, no disagreements",
+  "final_report": "PR #13 correct and complete for Phases 0-4"
+}
