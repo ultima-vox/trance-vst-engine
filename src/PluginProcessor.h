@@ -1,7 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "dsp/PsyBassVoice.h"
-#include "generator/PatternGenerator.h"
+#include "generator/Sequence.h"
 
 class VstEngineAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -42,6 +42,9 @@ public:
     juce::MidiKeyboardState& keyboardState() noexcept { return midiKeyboardState; }
     juce::File createGeneratedMidiFile();
 
+    // Called from processBlock to sync voice parameters
+    void syncVoiceParameters();
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void addGeneratedMidi(juce::MidiBuffer& midi, int numSamples, int channel, int rootNote);
@@ -52,7 +55,7 @@ private:
     juce::Synthesiser synth;
     juce::MidiKeyboardState midiKeyboardState;
     juce::AudioProcessorValueTreeState apvts;
-    vstengine::generator::Pattern pattern;
+    vstengine::generator::Sequence sequence;
 
     int currentStep {};
     int heldNote { -1 };

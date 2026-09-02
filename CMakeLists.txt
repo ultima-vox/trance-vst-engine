@@ -31,7 +31,8 @@ target_sources(VstEngine PRIVATE
   src/PluginProcessor.cpp src/PluginProcessor.h
   src/PluginEditor.cpp src/PluginEditor.h
   src/dsp/PsyBassVoice.cpp src/dsp/PsyBassVoice.h
-  src/generator/PatternGenerator.cpp src/generator/PatternGenerator.h)
+  src/generator/PatternGenerator.cpp src/generator/PatternGenerator.h
+  src/generator/Sequence.cpp src/generator/Sequence.h)
 
 target_compile_definitions(VstEngine PUBLIC
   JUCE_WEB_BROWSER=0
@@ -52,3 +53,9 @@ add_executable(pattern_generator_tests
   src/generator/PatternGenerator.cpp)
 target_include_directories(pattern_generator_tests PRIVATE src)
 add_test(NAME pattern_generator_tests COMMAND pattern_generator_tests)
+
+add_executable(sequence_tests
+  tests/SequenceTests.cpp
+  src/generator/Sequence.cpp)
+target_include_directories(sequence_tests PRIVATE src)
+add_test(NAME sequence_tests COMMAND sequence_tests)

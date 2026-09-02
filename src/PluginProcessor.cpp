@@ -6,9 +6,16 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput(
           "Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMETERS", createParameterLayout()),
-      pattern(vstengine::generator::PatternGenerator::generate(
-          vstengine::generator::Style::darkPsy, 0xD4A4u))
+      sequence(vstengine::generator::SequenceLength::steps16)
 {
+    // Initialize a basic dark-psy rolling pattern
+    for (size_t i = 0; i < sequence.size(); ++i) {
+        auto& step = sequence[i];
+        step.gate = (i % 4) != 0;  // quarter-note rests for kick
+        step.accent = (i % 4) == 1;
+        step.velocity = step.accent ? 0.95f : 0.72f;
+    }
+
     for (int i = 0; i < 4; ++i)
         synth.addVoice(new vstengine::dsp::PsyBassVoice());
 
@@ -87,16 +94,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     midi.addEvents(
         keyboardMidi, 0, buffer.getNumSamples(), 0);
 
-    const auto drive = apvts.getRawParameterValue("drive")->load();
-    const auto release = apvts.getRawParameterValue("release")->load();
-
-    for (int i = 0; i < synth.getNumVoices(); ++i) {
-        if (auto* voice =
-                dynamic_cast<vstengine::dsp::PsyBassVoice*>(synth.getVoice(i))) {
-            voice->setDrive(drive);
-            voice->setRelease(release);
-        }
-    }
+    syncVoiceParameters();
 
     synth.renderNextBlock(buffer, midi, 0, buffer.getNumSamples());
 }
@@ -177,7 +175,7 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
         samplesUntilNextStep -= 1.0;
 
         if (samplesUntilNextStep <= 0.0) {
-            const auto& step = pattern[static_cast<std::size_t>(currentStep)];
+            const auto& step = sequence[static_cast<size_t>(currentStep)];
 
             if (step.gate) {
                 heldChannel = channel;
@@ -189,11 +187,11 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
                         heldChannel, heldNote, velocity),
                     offset);
 
-                samplesUntilNoteOff = samplesPerStep * 0.62;
+                samplesUntilNoteOff = samplesPerStep * step.gateWidth;
             }
 
             currentStep = (currentStep + 1)
-                % static_cast<int>(pattern.size());
+                % static_cast<int>(sequence.size());
             samplesUntilNextStep += samplesPerStep;
         }
     }
@@ -204,15 +202,68 @@ VstEngineAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // --- Distortion ---
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "drive", 1 }, "Drive",
         juce::NormalisableRange<float> { 1.0f, 6.0f, 0.01f }, 1.8f));
 
+    // --- Pitch envelope ---
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "release", 1 }, "Release",
+        juce::ParameterID { "pitchEnvAmount", 1 }, "Pitch Env Amount",
+        juce::NormalisableRange<float> { 0.0f, 24.0f, 0.1f }, 12.0f, "st"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "pitchEnvTime", 1 }, "Pitch Env Time",
+        juce::NormalisableRange<float> { 0.005f, 0.2f, 0.001f, 0.5f },
+        0.018f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "pitchEnvCurve", 1 }, "Pitch Env Curve",
+        juce::NormalisableRange<float> { 0.5f, 5.0f, 0.1f }, 2.0f));
+
+    // --- ADSR ---
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "ampAttack", 1 }, "Attack",
+        juce::NormalisableRange<float> { 0.001f, 1.0f, 0.001f, 0.5f },
+        0.001f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "ampDecay", 1 }, "Decay",
+        juce::NormalisableRange<float> { 0.01f, 2.0f, 0.001f, 0.5f },
+        0.055f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "ampSustain", 1 }, "Sustain",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.72f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "ampRelease", 1 }, "Release",
         juce::NormalisableRange<float> { 0.005f, 0.250f, 0.001f, 0.5f },
         0.035f, "s"));
 
+    // --- Filter ---
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "filterCutoff", 1 }, "Cutoff",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "filterResonance", 1 }, "Resonance",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.7f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "filterDrive", 1 }, "Filter Drive",
+        juce::NormalisableRange<float> { 0.0f, 5.0f, 0.01f }, 1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "keyTracking", 1 }, "Key Tracking",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.0f));
+
+    // --- Output ---
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "outputLevel", 1 }, "Output Level",
+        juce::NormalisableRange<float> { 0.0f, 2.0f, 0.001f }, 1.0f));
+
+    // --- MIDI ---
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "midiMode", 1 },
         "MIDI Source",
@@ -232,12 +283,58 @@ VstEngineAudioProcessor::createParameterLayout()
     return { params.begin(), params.end() };
 }
 
+void VstEngineAudioProcessor::syncVoiceParameters()
+{
+    const auto drive = apvts.getRawParameterValue("drive")->load();
+    const auto release = apvts.getRawParameterValue("ampRelease")->load();
+    const auto pitchEnvAmount =
+        apvts.getRawParameterValue("pitchEnvAmount")->load();
+    const auto pitchEnvTime =
+        apvts.getRawParameterValue("pitchEnvTime")->load();
+    const auto pitchEnvCurve =
+        apvts.getRawParameterValue("pitchEnvCurve")->load();
+    const auto ampAttack =
+        apvts.getRawParameterValue("ampAttack")->load();
+    const auto ampDecay =
+        apvts.getRawParameterValue("ampDecay")->load();
+    const auto ampSustain =
+        apvts.getRawParameterValue("ampSustain")->load();
+    const auto filterCutoff =
+        apvts.getRawParameterValue("filterCutoff")->load();
+    const auto filterResonance =
+        apvts.getRawParameterValue("filterResonance")->load();
+    const auto filterDrive =
+        apvts.getRawParameterValue("filterDrive")->load();
+    const auto keyTracking =
+        apvts.getRawParameterValue("keyTracking")->load();
+    const auto outputLevel =
+        apvts.getRawParameterValue("outputLevel")->load();
+
+    for (int i = 0; i < synth.getNumVoices(); ++i) {
+        if (auto* voice =
+                dynamic_cast<vstengine::dsp::PsyBassVoice*>(synth.getVoice(i))) {
+            voice->setDrive(drive);
+            voice->setAmpRelease(release);
+            voice->setPitchEnvelopeAmount(pitchEnvAmount);
+            voice->setPitchEnvelopeTime(pitchEnvTime);
+            voice->setPitchEnvelopeCurve(pitchEnvCurve);
+            voice->setAmpAttack(ampAttack);
+            voice->setAmpDecay(ampDecay);
+            voice->setAmpSustain(ampSustain);
+            voice->setFilterCutoff(filterCutoff);
+            voice->setFilterResonance(filterResonance);
+            voice->setFilterDrive(filterDrive);
+            voice->setKeyTracking(keyTracking);
+            voice->setOutputLevel(outputLevel);
+        }
+    }
+}
+
 
 juce::File VstEngineAudioProcessor::createGeneratedMidiFile()
 {
     constexpr int ticksPerQuarter = 960;
     constexpr double ticksPerStep = ticksPerQuarter / 4.0;
-    constexpr double gateRatio = 0.62;
 
     const auto channel = juce::jlimit(
         1, 16,
@@ -246,10 +343,10 @@ juce::File VstEngineAudioProcessor::createGeneratedMidiFile()
         0, 127,
         static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
 
-    juce::MidiMessageSequence sequence;
+    juce::MidiMessageSequence sequenceMidi;
 
-    for (std::size_t i = 0; i < pattern.size(); ++i) {
-        const auto& step = pattern[i];
+    for (size_t i = 0; i < sequence.size(); ++i) {
+        const auto& step = sequence[i];
 
         if (!step.gate)
             continue;
@@ -257,26 +354,26 @@ juce::File VstEngineAudioProcessor::createGeneratedMidiFile()
         const auto note = juce::jlimit(0, 127, rootNote + step.noteOffset);
         const auto velocity = step.accent ? 0.95f : 0.72f;
         const auto startTick = static_cast<double>(i) * ticksPerStep;
-        const auto endTick = startTick + ticksPerStep * gateRatio;
+        const auto endTick = startTick + ticksPerStep * step.gateWidth;
 
         auto noteOn = juce::MidiMessage::noteOn(channel, note, velocity);
         noteOn.setTimeStamp(startTick);
-        sequence.addEvent(noteOn);
+        sequenceMidi.addEvent(noteOn);
 
         auto noteOff = juce::MidiMessage::noteOff(channel, note);
         noteOff.setTimeStamp(endTick);
-        sequence.addEvent(noteOff);
+        sequenceMidi.addEvent(noteOff);
     }
 
     auto endOfTrack = juce::MidiMessage::endOfTrack();
     endOfTrack.setTimeStamp(
-        static_cast<double>(pattern.size()) * ticksPerStep);
-    sequence.addEvent(endOfTrack);
-    sequence.updateMatchedPairs();
+        static_cast<double>(sequence.size()) * ticksPerStep);
+    sequenceMidi.addEvent(endOfTrack);
+    sequenceMidi.updateMatchedPairs();
 
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(ticksPerQuarter);
-    midiFile.addTrack(sequence);
+    midiFile.addTrack(sequenceMidi);
 
     const auto tempFile =
         juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -294,15 +391,39 @@ juce::File VstEngineAudioProcessor::createGeneratedMidiFile()
 
 void VstEngineAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
-        copyXmlToBinary(*xml, destData);
+    juce::MemoryBlock state;
+    
+    // Serialize sequence
+    sequence.serialize(state);
+    
+    // Append APVTS state
+    if (auto apvtsXml = apvts.copyState().createXml()) {
+        juce::MemoryBlock apvtsData;
+        copyXmlToBinary(*apvtsXml, apvtsData);
+        state.append(apvtsData.getData(), apvtsData.getSize());
+    }
+    
+    destData = state;
 }
 
 void VstEngineAudioProcessor::setStateInformation(const void* data,
                                                    const int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    juce::MemoryBlock mb(data, sizeInBytes);
+    
+    // Deserialize sequence (first 12+ bytes)
+    if (mb.getSize() >= 12) {
+        sequence = vstengine::generator::Sequence::deserialize(mb);
+    }
+    
+    // Deserialize APVTS state (remaining bytes)
+    const size_t seqSize = 12 + sequence.size() * 29;
+    if (mb.getSize() > static_cast<ssize_t>(seqSize)) {
+        const void* apvtsData = mb.getData() + seqSize;
+        const int apvtsSize = static_cast<int>(mb.getSize() - seqSize);
+        if (auto xml = getXmlFromBinary(apvtsData, apvtsSize))
+            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
