@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "generator/PpqSync.h"
 #include "preset/PresetManager.h"
 #include "export/MidiExport.h"
 #include <cmath>
@@ -76,6 +77,8 @@ void VstEngineAudioProcessor::resetPlaybackState()
     lastGeneratedNote = -1;
     playedStepCounter = 0;
     transportWasPlaying = false;
+    continuityValid = false;
+    lastBlockEndPpq = 0.0;
     playHeadStep = -1;
     clearVoiceGlideRequests();
 
@@ -103,6 +106,11 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // scheduled (same thread, same block ordering — no synchronization needed).
     clearVoiceGlideRequests();
 
+    // MIDI source isolation: the generator decision only sees EXTERNAL host
+    // notes (note events present in this block's incoming buffer — computed
+    // before anything is appended) and GUI keyboard notes. Internally
+    // generated MIDI is never an input observation, so it can never suppress
+    // generator playback in AUTO mode.
     const auto incomingHasNotes = containsNoteEvents(midi);
     const auto keyboardHasNotes = keyboardHasActiveNotes();
     const auto mode = currentMidiMode();
@@ -113,46 +121,26 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         0, 127,
         static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
 
-    bool useGenerator = false;
+    // GENERATOR mode drops incoming host MIDI (only generated material plays).
+    // GUI keyboard notes intentionally still work in GENERATOR mode, matching
+    // the documented PIANO ROLL / GENERATOR / BOTH semantics.
+    if (mode == MidiSourceMode::generator)
+        midi.clear();
 
-    switch (mode) {
-        case MidiSourceMode::autoDetect:
-            useGenerator = !(incomingHasNotes || keyboardHasNotes);
-            break;
-        case MidiSourceMode::pianoRoll:
-            useGenerator = false;
-            break;
-        case MidiSourceMode::generator:
-            midi.clear();
-            useGenerator = true;
-            break;
-        case MidiSourceMode::both:
-            useGenerator = true;
-            break;
-    }
+    const bool useGenerator = vstengine::midi::shouldRunGenerator(
+        mode, incomingHasNotes, keyboardHasNotes);
 
-    if (!useGenerator && heldNote >= 0) {
-        midi.addEvent(
-            juce::MidiMessage::noteOff(heldChannel, heldNote), 0);
-        heldNote = -1;
-        samplesUntilNoteOff = -1.0;
-        samplesUntilNextStep = 0.0;
-        ratchetsRemaining = 0;
-        lastGeneratedNote = -1;
-    }
+    if (!useGenerator)
+        flushGeneratedNoteState(midi, 0);
 
     if (useGenerator)
         addGeneratedMidi(midi, buffer.getNumSamples(), channel, rootNote);
-    else
-        playHeadStep = -1;
 
-    for (const auto metadata : midi)
-        midiKeyboardState.processNextMidiEvent(metadata.getMessage());
-
-    // Use the preallocated member scratch buffer: clear, fill, merge. No
-    // local MidiBuffer is constructed and the scratch buffer's capacity was
-    // reserved in prepareToPlay, so this path performs no heap allocation on
-    // the realtime thread.
+    // GUI keyboard input: the keyboard state deliberately receives ONLY the
+    // notes the user plays on the on-screen keyboard. Host and generated MIDI
+    // reach the synth directly from the block buffer and are never fed into
+    // the keyboard state, so "generated notes highlight the keyboard" can
+    // never suppress generator playback in AUTO mode.
     keyboardMidiScratch.clear();
     midiKeyboardState.processNextMidiBuffer(
         keyboardMidiScratch, 0, buffer.getNumSamples(), true);
@@ -238,30 +226,189 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
 {
     double bpm = 145.0;
     bool playing = true;
+    bool havePpq = false;
+    double ppqAtBlockStart = 0.0;
 
     if (auto* playHeadProvider = getPlayHead()) {
         if (const auto position = playHeadProvider->getPosition()) {
             if (const auto hostBpm = position->getBpm())
                 bpm = *hostBpm;
             playing = position->getIsPlaying();
+            if (const auto hostPpq = position->getPpqPosition()) {
+                ppqAtBlockStart = *hostPpq;
+                havePpq = true;
+            }
         }
     }
 
+    // Stop always flushes generated note state so no generated note can hang.
     if (!playing) {
-        if (heldNote >= 0)
-            midi.addEvent(
-                juce::MidiMessage::noteOff(heldChannel, heldNote), 0);
-
-        heldNote = -1;
-        samplesUntilNoteOff = -1.0;
-        samplesUntilNextStep = 0.0;
-        ratchetsRemaining = 0;
-        lastGeneratedNote = -1;
-        playHeadStep = -1;
+        flushGeneratedNoteState(midi, 0);
         transportWasPlaying = false;
         return;
     }
 
+    // Host-PPQ-synchronized scheduling when the host provides PPQ (Cubase
+    // does); otherwise the documented, tested BPM-derived free-running
+    // fallback.
+    if (havePpq)
+        addGeneratedMidiPpq(midi, numSamples, channel, rootNote,
+                            ppqAtBlockStart, bpm);
+    else
+        addGeneratedMidiFallback(midi, numSamples, channel, rootNote, bpm);
+}
+
+    void VstEngineAudioProcessor::addGeneratedMidiPpq(
+    juce::MidiBuffer& midi, const int numSamples, const int channel,
+    const int rootNote, const double ppqAtBlockStart, const double bpm)
+{
+    const double samplesPerQuarter =
+        currentSampleRate * 60.0 / juce::jmax(20.0, bpm);
+    const double stepsPerQuarter =
+        stepsPerQuarterNote(sequenceData.getTimingMode());
+    const int seqSize = sequenceData.size();
+    const double blockDurationQuarters =
+        static_cast<double>(numSamples) / samplesPerQuarter;
+    const double blockEndPpq = ppqAtBlockStart + blockDurationQuarters;
+
+    // Transport (re)start: reseed the deterministic probability RNG exactly
+    // like the free-running fallback so the same project state restarted from
+    // the same point makes the same probability decisions.
+    if (!transportWasPlaying) {
+        transportWasPlaying = true;
+        playedStepCounter = 0;
+        probabilityState.state = static_cast<std::uint32_t>(
+            apvts.getRawParameterValue("rngSeed")->load());
+    }
+
+    // Seek / loop-wrap / first-playing-block detection. When the host PPQ
+    // jumps instead of continuing from the previous block's end, hard-realign:
+    // flush any sounding generated note safely and re-anchor to the reported
+    // musical position. Probability rolls stay monotonic (no reseed) so a
+    // given playback path remains deterministic.
+    //
+    // Tolerance is half a step of the current canonical grid: far below any
+    // real seek/loop distance (>= one step) yet far above host rounding and
+    // smoothly-automated tempo drift, so grid drift never hard-cuts notes.
+    const double jumpTolerance = 0.5 / stepsPerQuarter;
+    const bool jump = !continuityValid
+        || std::abs(ppqAtBlockStart - lastBlockEndPpq) > jumpTolerance;
+
+    if (jump) {
+        flushGeneratedNoteState(midi, 0);
+        ratchetsRemaining = 0;
+        samplesUntilNextRatchet = 0.0;
+        subNoteDuration = 0.0;
+        lastGeneratedNote = -1;
+    }
+
+    // The UI playhead mirrors the canonical step containing the block-start
+    // musical position.
+    const auto grid = vstengine::sync::resolveStepGrid(
+        ppqAtBlockStart, seqSize, stepsPerQuarter);
+    playHeadStep = grid.stepIndex;
+
+    // Schedule every step boundary that starts inside this block. Onsets are
+    // derived from absolute musical coordinates, so starting the transport
+    // from an arbitrary locator, a seek, and a cycle-loop wrap all land on the
+    // correct sequence step. The canonical stepsPerQuarterNote() grid is the
+    // single source of truth, identical to MIDI export.
+    const auto firstBoundary = vstengine::sync::nextStepBoundary(
+        ppqAtBlockStart, stepsPerQuarter);
+
+    for (auto boundary = firstBoundary;; ++boundary) {
+        const double boundaryPpq =
+            static_cast<double>(boundary) / stepsPerQuarter;
+        if (boundaryPpq >= blockEndPpq)
+            break;
+
+        const double boundaryOffsetSamples =
+            (boundaryPpq - ppqAtBlockStart) * samplesPerQuarter;
+        const int boundaryOffset =
+            juce::jmax(0, static_cast<int>(boundaryOffsetSamples));
+        if (boundaryOffset >= numSamples)
+            break;
+
+        const auto wrapped = ((boundary % seqSize) + seqSize) % seqSize;
+        const auto& step = sequenceData[static_cast<int>(wrapped)];
+
+        // Advance the probability RNG exactly once per step boundary (same
+        // rule as the free-running path and MIDI export), then evaluate.
+        ++playedStepCounter;
+        const bool passesProbability =
+            vstengine::generator::shouldPlayStep(probabilityState, step.probability);
+
+        // Remember the last boundary's step so a carried ratchet tail can
+        // re-read its step from the canonical sequence next block.
+        currentStep = (static_cast<int>(wrapped) + 1) % seqSize;
+        ratchetsRemaining = 0;
+        samplesUntilNextRatchet = 0.0;
+
+        if (!(passesProbability && step.gate))
+            continue;
+
+        const int ratchet = juce::jlimit(1, 8, step.ratchetCount);
+        const double samplesPerStep = samplesPerQuarter / stepsPerQuarter;
+        const double subNoteSamples =
+            samplesPerStep / static_cast<double>(ratchet);
+        subNoteDuration = subNoteSamples;
+
+        for (int r = 0; r < ratchet; ++r) {
+            const double onOffsetSamples =
+                boundaryOffsetSamples + static_cast<double>(r) * subNoteSamples;
+
+            if (onOffsetSamples < static_cast<double>(numSamples)) {
+                triggerGeneratedNote(
+                    midi, juce::jmax(0, static_cast<int>(onOffsetSamples)),
+                    channel, rootNote, step, samplesPerStep, subNoteSamples);
+            } else {
+                // The tail of this step's ratchets lands in the next block:
+                // continue it with the sample-domain countdown (same mechanics
+                // as the free-running path).
+                ratchetsRemaining = ratchet - r;
+                samplesUntilNextRatchet =
+                    onOffsetSamples - static_cast<double>(numSamples) + 1.0;
+                break;
+            }
+        }
+    }
+
+    // Countdown for note-off and carried-ratchet tails (sample domain). Step
+    // onsets are already scheduled above; this loop only finishes tails that
+    // span blocks.
+    for (int offset = 0; offset < numSamples; ++offset) {
+        if (samplesUntilNoteOff >= 0.0) {
+            samplesUntilNoteOff -= 1.0;
+            if (samplesUntilNoteOff <= 0.0 && heldNote >= 0) {
+                midi.addEvent(
+                    juce::MidiMessage::noteOff(heldChannel, heldNote), offset);
+                heldNote = -1;
+                samplesUntilNoteOff = -1.0;
+            }
+        }
+
+        if (ratchetsRemaining > 0) {
+            samplesUntilNextRatchet -= 1.0;
+            if (samplesUntilNextRatchet <= 0.0) {
+                const auto& step =
+                    sequenceData[(currentStep + seqSize - 1) % seqSize];
+                triggerGeneratedNote(midi, offset, channel, rootNote, step,
+                                     samplesPerQuarter / stepsPerQuarter,
+                                     subNoteDuration);
+                --ratchetsRemaining;
+                samplesUntilNextRatchet += subNoteDuration;
+            }
+        }
+    }
+
+    continuityValid = true;
+    lastBlockEndPpq = blockEndPpq;
+}
+
+void VstEngineAudioProcessor::addGeneratedMidiFallback(
+    juce::MidiBuffer& midi, const int numSamples, const int channel,
+    const int rootNote, const double bpm)
+{
     // Deterministic probability RNG: reseeded on every transport restart so
     // playback from the same project state reproduces the same decisions.
     if (!transportWasPlaying) {
@@ -334,6 +481,27 @@ void VstEngineAudioProcessor::addGeneratedMidi(juce::MidiBuffer& midi,
     }
 }
 
+void VstEngineAudioProcessor::flushGeneratedNoteState(
+    juce::MidiBuffer& midi, const int offset) noexcept
+{
+    // Cut any sounding generated note deterministically. Called on host stop,
+    // source-mode switches, seek/loop realigns and any flush path so a
+    // generated note can never hang past the position that scheduled it.
+    if (heldNote >= 0)
+        midi.addEvent(juce::MidiMessage::noteOff(heldChannel, heldNote), offset);
+
+    heldNote = -1;
+    heldChannel = 1;
+    samplesUntilNoteOff = -1.0;
+    samplesUntilNextStep = 0.0;
+    ratchetsRemaining = 0;
+    samplesUntilNextRatchet = 0.0;
+    subNoteDuration = 0.0;
+    lastGeneratedNote = -1;
+    playHeadStep = -1;
+    continuityValid = false;
+    clearVoiceGlideRequests();
+}
 void VstEngineAudioProcessor::triggerGeneratedNote(juce::MidiBuffer& midi,
                                                    const int offset,
                                                    const int channel,

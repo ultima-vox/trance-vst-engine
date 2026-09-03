@@ -102,3 +102,45 @@ The exported clip uses:
 - 16th-note step spacing
 
 Cubase can then place/import the MIDI clip into the project for normal piano-roll editing.
+
+## Host synchronization
+
+Generated playback is synchronized to the host's musical position:
+
+- **PPQ sync (primary).** When the host provides an `AudioPlayHead::PositionInfo`
+  PPQ position (Cubase does), step onsets are scheduled from the absolute
+  quarter-note position against the canonical `stepsPerQuarterNote()` grid.
+  This gives bar-accurate alignment at any start locator, immediate realign on
+  seek/jump, correct wrap on cycle/loop, and musical alignment that survives
+  BPM changes. The alignment math lives in `src/generator/PpqSync.h` and is
+  unit-tested (`transport_sync_tests`).
+- **Fallback.** If a host does not provide PPQ, playback falls back to the
+  historical BPM-derived free-running step timer (start at step 0, no locator
+  alignment). The timing basis (canonical step durations) is covered by the
+  sync tests; the fallback itself requires a Cubase manual check.
+
+Probability still advances exactly once per sequence step and reseeds on every
+transport restart, so a given project state restarted from the same point
+reproduces the same decisions as MIDI export.
+
+## MIDI source isolation
+
+The generator decision (`src/midi/SourceSelector.h`, unit-tested by
+`midi_source_tests`) only ever observes **external host notes** and **GUI
+keyboard notes**:
+
+- **AUTO** — host/GUI input wins; the generator runs only when neither is present.
+- **PIANO ROLL** — host/GUI input only.
+- **GENERATOR** — only generated material (incoming host MIDI is dropped).
+- **BOTH** — host/GUI input and generated material are combined.
+
+Internally generated MIDI is never counted as user input. The virtual keyboard
+state deliberately sees only what the user plays on it, so "generated notes
+would highlight the keyboard" can never suppress generator playback in AUTO.
+Consequence: the on-screen keyboard currently highlights only GUI-played keys,
+not Cubase incoming or generated notes; Cubase piano-roll input still plays
+normally.
+
+Host/Cubase-dependent behavior (actual PPQ alignment, locator start, seek,
+loop wrap, AUTO source switching in a real session) must be verified in Cubase
+per the acceptance checklist.
