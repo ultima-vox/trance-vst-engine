@@ -146,10 +146,11 @@ public:
     // Serialization
     //
     // The binary format is versioned (magic + uint16 version + payload).
-    // deserialize() dispatches on the version: v1 has its own loader below,
-    // unsupported/future versions fail safely to a default sequence. When the
-    // format is extended to v2+, add a loadV2 + a v1->v2 migration step in
-    // Sequence.cpp; do not reuse the v1 loader for a changed layout.
+    // deserialize() accepts only currentVersion; v1 (raw struct layout) is
+    // rejected because it depended on compiler ABI, struct padding and bool
+    // representation. When the format is extended to v3+, bump currentVersion,
+    // add a loadV3() plus a v2->v3 migration step in Sequence.cpp and route old
+    // versions through the chain instead of rejecting them.
     void serialize(juce::MemoryBlock& mb) const;
     [[nodiscard]] static Sequence deserialize(const juce::MemoryBlock& mb);
 
