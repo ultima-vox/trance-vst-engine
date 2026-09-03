@@ -10,11 +10,6 @@ namespace vstengine::generator {
 namespace {
     constexpr uint32_t magicNumber = 0x53514551; // "SEQQ"
 
-    // Byte capacity budget for MidiBuffer scratch: enough for a dense block of
-    // MIDI keyboard events. 256 events * ~16 bytes/event (sysex headroom) = 4096
-    // bytes. Covers any realistic per-block keyboard load with safety margin.
-    constexpr size_t midiBufferCapacityBytes = 4096;
-
     // --- Explicit fixed-width serialization helpers ---
     // All multi-byte values are written in little-endian byte order (consistent
     // on x86/x64 and documented for any future big-endian port).
@@ -490,3 +485,4 @@ void Sequence::copyTo(Sequence& dest) const
 }
 
 } // namespace vstengine::generator
+
