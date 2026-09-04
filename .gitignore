@@ -24,3 +24,5 @@ frontend/app/dist/
 .gigacode_vsc/
 .ultracode/
 .workflow/
+*.log
+
