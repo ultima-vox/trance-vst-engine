@@ -64,6 +64,18 @@ target_include_directories(sequence_tests PRIVATE src)
 target_link_libraries(sequence_tests PRIVATE juce::juce_audio_basics)
 add_test(NAME sequence_tests COMMAND sequence_tests)
 
+add_executable(midi_source_tests
+  tests/MidiSourceTests.cpp
+  src/midi/SourceSelector.h)
+target_include_directories(midi_source_tests PRIVATE src)
+add_test(NAME midi_source_tests COMMAND midi_source_tests)
+
+add_executable(transport_sync_tests
+  tests/TransportSyncTests.cpp
+  src/generator/PpqSync.h)
+target_include_directories(transport_sync_tests PRIVATE src)
+add_test(NAME transport_sync_tests COMMAND transport_sync_tests)
+
 add_executable(midi_export_tests
   tests/MidiExportTests.cpp
   src/export/MidiExport.cpp
