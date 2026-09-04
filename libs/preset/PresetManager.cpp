@@ -67,7 +67,7 @@ struct FactoryPreset {
     std::array<FactorySoundParam, 13> params;
 };
 
-// Parameter order must match VstEngineAudioProcessor::soundParameterIds.
+// Parameter order must match vstengine::core::soundParameterIds.
 static const FactoryPreset factoryPresets[] = {
     { "Tight Rolling", { {
         { "drive", 2.2f }, { "release", 0.05f }, { "ampAttack", 0.0005f },
