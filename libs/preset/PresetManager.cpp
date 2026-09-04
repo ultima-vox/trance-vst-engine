@@ -133,7 +133,7 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind)
 {
     xml.setAttribute("version", currentPresetVersion);
     xml.setAttribute("type", kind == PresetKind::sound ? "sound" : "full");
-    xml.createNewChildElement("name")->setText(currentPresetName);
+    xml.createNewChildElement("name")->addTextElement(currentPresetName);
 
     // Sound preset: psy-bass engine sound parameters ONLY (no sequence, no
     // global MIDI/generator state). Full preset: complete APVTS state (which
@@ -152,7 +152,7 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind)
         }
     } else {
         paramsEl->addChildElement(state.createXml().release());
-        xml.createNewChildElement("sequence")->setText(encodeSequence(sequence));
+        xml.createNewChildElement("sequence")->addTextElement(encodeSequence(sequence));
     }
 }
 

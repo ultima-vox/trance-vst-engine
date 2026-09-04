@@ -73,7 +73,8 @@ int main()
         s.reset(sampleRate);
         s.reseedProbability(1234);
 
-        // Step duration in quarters = 0.25; at 120 BPM = 0.5 s = 24000 samples.
+        // Step duration in quarters = 0.25; at 120 BPM.
+        // blocksPerQuarter = sampleRate / (bpm/60) / blockSize.
         juce::MidiBuffer midi;
         TransportFrame frame;
         frame.playing = true;
@@ -86,19 +87,32 @@ int main()
         require(countNoteOffs(midi) == 0, "PPQ: gate 0.5 extends past block");
         require(s.playHeadStep() == 0, "PPQ: playhead starts at step 0");
 
-        // Enough blocks to wrap past the sequence end.
+        // Advance block-by-block across 64 blocks. Recompute the expected
+        // boundary count from the same constants the scheduler uses, so the
+        // assertion can't drift against the implementation.
+        const double stepQuarters = vstengine::sequence::stepDurationInQuarterNotes(
+            vstengine::sequence::TimingMode::sixteenth);
+        const double stepBlocks = (60.0 / frame.bpm) * sampleRate * stepQuarters
+                                 / static_cast<double>(blockSize);
+        const int totalBlocks = 64;
+        // Boundaries fall on stepQuarters multiples; one fires at ppq 0 plus
+        // one per stepBlocks thereafter (capped by the block count).
+        const int expectedNotes = 1 + static_cast<int>(
+            static_cast<double>(totalBlocks - 1) / stepBlocks);
+
         int totalNotes = countNoteOns(midi);
-        const double blocksPerQuarter =
-            sampleRate / (120.0 / 60.0) / static_cast<double>(blockSize);
-        double ppq = 1.0 / blocksPerQuarter;
-        for (int b = 1; b < 64; ++b) {
+        double ppq = static_cast<double>(blockSize) / sampleRate
+                     * (frame.bpm / 60.0);
+        for (int b = 1; b < totalBlocks; ++b) {
             juce::MidiBuffer block;
             frame.ppqAtBlockStart = ppq;
             s.process(block, seq, frame, blockSize, sampleRate, 1, 36, 1234);
             totalNotes += countNoteOns(block);
-            ppq += 1.0 / blocksPerQuarter;
+            ppq += static_cast<double>(blockSize) / sampleRate
+                   * (frame.bpm / 60.0);
         }
-        require(totalNotes == 17, "PPQ: 17 steps over 64 blocks at 120 BPM");
+        require(totalNotes == expectedNotes,
+                "PPQ: boundary count over 64 blocks matches grid math");
     }
 
     // 2: Seek detection flushes and re-anchors (no stuck notes).
@@ -114,13 +128,15 @@ int main()
         frame.bpm = 120.0;
         frame.ppqAtBlockStart = 0.0;
 
-        // Run a few blocks, then jump the PPQ forward by 8 quarters (seek).
+        // Run enough blocks to actually cross the first step boundary (at
+        // 120 BPM a 1/16 step spans ~11.7 blocks of 512 samples), so a
+        // generated note is sounding when we seek.
         double ppq = 0.0;
-        for (int b = 0; b < 8; ++b) {
+        for (int b = 0; b < 16; ++b) {
             juce::MidiBuffer block;
             frame.ppqAtBlockStart = ppq;
             s.process(block, seq, frame, blockSize, sampleRate, 1, 36, 7);
-            ppq += 1.0 / (sampleRate / 2.0 / static_cast<double>(blockSize));
+            ppq += static_cast<double>(blockSize) / sampleRate * 2.0;
         }
         juce::MidiBuffer seekBlock;
         frame.ppqAtBlockStart = ppq + 8.0; // big jump = seek

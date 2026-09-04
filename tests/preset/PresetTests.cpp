@@ -1,6 +1,7 @@
 #include "preset/PresetManager.h"
 #include "core/SoundParameterIds.h"
 #include <juce_core/juce_core.h>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -150,7 +151,10 @@ int main()
         require(file.existsAsFile(), "preset file written");
         auto xml = juce::parseXML(file.loadFileAsString());
         require(xml != nullptr, "preset parses");
-        xml->getChildByName("sequence")->setText("bm90LWEtc2VxdWVuY2U=");
+        auto* seqEl = xml->getChildByName("sequence");
+        while (seqEl->getNumChildElements() > 0)
+            seqEl->removeChildElement(seqEl->getChildElement(0), true);
+        seqEl->addTextElement("bm90LWEtc2VxdWVuY2U=");
         file.replaceWithText(xml->toString());
 
         require(!manager.loadFullPreset("Corrupt Me"),
