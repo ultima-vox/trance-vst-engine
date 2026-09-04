@@ -6,10 +6,10 @@ namespace vstengine::sync {
 
 // Pure musical-grid math used by realtime host-PPQ synchronization.
 //
-// The plugin's sequence sits on a fixed grid of stepsPerQuarterNote() steps
-// per quarter note (the canonical Sequence timing mode; see Sequence.h). This
-// module resolves a host quarter-note position against that grid. It has no
-// JUCE / plugin / audio-buffer dependencies, so the alignment rules used by
+// The plugin's sequence sits on a fixed grid of stepsPerQuarter steps per
+// quarter note (the canonical Sequence timing mode; see libs/sequence).
+// This module resolves a host quarter-note position against that grid. It has
+// no JUCE / plugin / audio-buffer dependencies, so the alignment rules used by
 // transport start, seek and cycle-loop wrap are directly unit-testable and by
 // construction identical in every code path that consumes them.
 

@@ -1,0 +1,41 @@
+﻿Test project C:/ultima-vox/trance-vst-engine/.repo/build
+    Start 1: sequence_tests
+1/9 Test #1: sequence_tests ...................   Passed    0.07 sec
+    Start 2: transport_sync_tests
+2/9 Test #2: transport_sync_tests .............   Passed    0.05 sec
+    Start 3: midi_source_tests
+3/9 Test #3: midi_source_tests ................   Passed    0.06 sec
+    Start 4: midi_export_tests
+4/9 Test #4: midi_export_tests ................   Passed    0.05 sec
+    Start 5: generated_note_scheduler_tests
+5/9 Test #5: generated_note_scheduler_tests ...***Failed    0.06 sec
+FAIL: PPQ: 17 steps over 64 blocks at 120 BPM at line 101
+
+    Start 6: psy_bass_tests
+6/9 Test #6: psy_bass_tests ...................   Passed    0.09 sec
+    Start 7: preset_tests
+7/9 Test #7: preset_tests .....................***Failed    0.11 sec
+FAIL: full preset loads at line 130
+
+    Start 8: generator_tests
+8/9 Test #8: generator_tests ..................   Passed    0.05 sec
+    Start 9: state_round_trip_tests
+9/9 Test #9: state_round_trip_tests ...........***Failed    0.09 sec
+FAIL: full preset reloads at line 146
+
+
+67% tests passed, 3 tests failed out of 9
+
+Total Test time (real) =   1.03 sec
+
+The following tests FAILED:
+	  5 - generated_note_scheduler_tests (Failed)
+	  7 - preset_tests (Failed)
+	  9 - state_round_trip_tests (Failed)
+ctest : Errors while running CTest
+строка:1 знак:11
++ cd .repo; ctest --test-dir build -C Release --output-on-failure 2>&1  ...
++           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Errors while running CTest:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

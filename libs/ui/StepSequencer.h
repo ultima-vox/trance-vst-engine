@@ -1,8 +1,8 @@
 #pragma once
-#include <JuceHeader.h>
-#include "../generator/Sequence.h"
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "sequence/Sequence.h"
 
-namespace vstengine::gui {
+namespace vstengine::ui {
 
 class StepSequencer final : public juce::Component {
 public:
@@ -23,7 +23,7 @@ public:
         virtual void onClear() = 0;
     };
 
-    explicit StepSequencer(vstengine::generator::Sequence& seq, Callbacks* cb = nullptr);
+    explicit StepSequencer(vstengine::sequence::Sequence& seq, Callbacks* cb = nullptr);
     ~StepSequencer() override = default;
 
     void paint(juce::Graphics&) override;
@@ -37,7 +37,7 @@ public:
     void setPlayHeadPosition(int step);
 
 private:
-    vstengine::generator::Sequence& sequence;
+    vstengine::sequence::Sequence& sequence;
     Callbacks* callbacks { nullptr };
 
     // Layout
@@ -127,4 +127,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StepSequencer)
 };
 
-} // namespace vstengine::gui
+} // namespace vstengine::ui

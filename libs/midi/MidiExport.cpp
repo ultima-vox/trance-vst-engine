@@ -42,7 +42,7 @@ void addSlideRamp(juce::MidiMessageSequence& track, int channel,
 
 } // anonymous namespace
 
-juce::MidiMessageSequence buildSequenceTrack(const vstengine::generator::Sequence& seq,
+juce::MidiMessageSequence buildSequenceTrack(const vstengine::sequence::Sequence& seq,
                                              const Options& options)
 {
     // Canonical timing: identical formula to realtime playback.
@@ -51,7 +51,7 @@ juce::MidiMessageSequence buildSequenceTrack(const vstengine::generator::Sequenc
 
     juce::MidiMessageSequence track;
     int previousAudibleNote = -1;
-    vstengine::generator::ProbabilityState probState { options.seed };
+    vstengine::sequence::ProbabilityState probState { options.seed };
 
     for (int i = 0; i < seq.size(); ++i) {
         const auto& step = seq[i];
@@ -59,7 +59,7 @@ juce::MidiMessageSequence buildSequenceTrack(const vstengine::generator::Sequenc
         // Advance RNG once per step regardless of gate state, then evaluate
         // probability. This rule is identical to realtime playback so the same
         // seed + sequence produces the same pass/skip decisions in both paths.
-        const bool passesProbability = vstengine::generator::shouldPlayStep(probState, step.probability);
+        const bool passesProbability = vstengine::sequence::shouldPlayStep(probState, step.probability);
 
         if (!step.gate)
             continue;

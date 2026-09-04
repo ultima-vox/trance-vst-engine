@@ -1,4 +1,4 @@
-#include "generator/Sequence.h"
+#include "sequence/Sequence.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -22,7 +22,7 @@ static int testsPassed = 0;
 
 int main()
 {
-    using namespace vstengine::generator;
+    using namespace vstengine::sequence;
 
     // 1: Default construction
     {

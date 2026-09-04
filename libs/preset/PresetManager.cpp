@@ -1,12 +1,12 @@
 #include "PresetManager.h"
-#include "../PluginProcessor.h"
+#include "core/SoundParameterIds.h"
 #include <array>
 #include <iterator>
 
 namespace vstengine {
 
 namespace {
-juce::String encodeSequence(const vstengine::generator::Sequence& seq) {
+juce::String encodeSequence(const vstengine::sequence::Sequence& seq) {
     juce::MemoryBlock mb;
     seq.serialize(mb);
     return mb.toBase64Encoding();
@@ -14,13 +14,13 @@ juce::String encodeSequence(const vstengine::generator::Sequence& seq) {
 
 // Fail-safe decode: only replaces the target sequence when the blob decodes
 // AND passes structural validation. Corrupt data never touches live state.
-bool decodeSequence(const juce::String& encoded, vstengine::generator::Sequence& seq) {
+bool decodeSequence(const juce::String& encoded, vstengine::sequence::Sequence& seq) {
     juce::MemoryBlock mb;
     if (!mb.fromBase64Encoding(encoded))
         return false;
-    if (!vstengine::generator::Sequence::isValidSerialization(mb))
+    if (!vstengine::sequence::Sequence::isValidSerialization(mb))
         return false;
-    seq = vstengine::generator::Sequence::deserialize(mb);
+    seq = vstengine::sequence::Sequence::deserialize(mb);
     return true;
 }
 }
@@ -106,10 +106,10 @@ static const FactoryPreset factoryPresets[] = {
         { "pitchEnvCurve", 2.2f }, { "outputLevel", 0.9f } } } },
 };
 
-PresetManager::PresetManager(VstEngineAudioProcessor& proc,
-                             vstengine::generator::Sequence& seq)
-    : processor(proc), sequence(seq) {
-    presetDirectory = getPresetDirectory();
+PresetManager::PresetManager(PresetStateStore& stateStore,
+                             vstengine::sequence::Sequence& seq,
+                             juce::File directory)
+    : store(stateStore), sequence(seq), presetDirectory(directory) {
     if (!presetDirectory.exists())
         presetDirectory.createDirectory();
 }
@@ -140,13 +140,13 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind)
     // includes the global MIDI/generator settings) plus the canonical
     // sequence - all Phase 0-4 state required by #11.
     auto* paramsEl = xml.createNewChildElement("parameters");
-    auto state = processor.parameters().copyState();
+    auto state = store.copyState();
 
     if (kind == PresetKind::sound) {
         auto* paramsTree = paramsEl->createNewChildElement("PARAMETERS");
-        for (int i = 0; i < VstEngineAudioProcessor::numSoundParameterIds; ++i) {
+        for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
             const auto child = state.getChildWithProperty(
-                "id", juce::var(VstEngineAudioProcessor::soundParameterIds[i]));
+                "id", juce::var(vstengine::core::soundParameterIds[i]));
             if (child.isValid())
                 paramsTree->addChildElement(child.createXml().release());
         }
@@ -185,7 +185,7 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
     }
 
     // Full presets carry the sequence; Sound presets never touch it.
-    vstengine::generator::Sequence restoredSequence;
+    vstengine::sequence::Sequence restoredSequence;
     bool hasSequence = false;
     if (typeAttr == "full") {
         auto* seqEl = xml.getChildByName("sequence");
@@ -209,9 +209,9 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
     if (typeAttr == "sound") {
         // Apply only the engine sound parameters onto the current state;
         // sequence, MIDI and generator settings are left untouched.
-        auto newState = processor.parameters().copyState();
-        for (int i = 0; i < VstEngineAudioProcessor::numSoundParameterIds; ++i) {
-            const auto id = juce::var(VstEngineAudioProcessor::soundParameterIds[i]);
+        auto newState = store.copyState();
+        for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
+            const auto id = juce::var(vstengine::core::soundParameterIds[i]);
             const auto src = restored.getChildWithProperty("id", id);
             if (!src.isValid())
                 continue;
@@ -219,10 +219,10 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
             if (dst.isValid())
                 dst.copyPropertiesFrom(src, nullptr);
         }
-        processor.parameters().replaceState(std::move(newState));
+        store.replaceState(std::move(newState));
     } else {
         // Full preset: complete APVTS state + sequence.
-        processor.parameters().replaceState(restored);
+        store.replaceState(restored);
         sequence = restoredSequence;
     }
 
@@ -370,13 +370,10 @@ bool PresetManager::loadFactoryPreset(const juce::String& name) {
         auto* paramsTree = paramsEl->createNewChildElement("PARAMETERS");
 
         for (const auto& param : preset.params) {
-            auto* ranged = processor.parameters().getParameter(param.id);
-            if (ranged == nullptr)
-                return false;
             auto* paramEl = paramsTree->createNewChildElement("PARAM");
             paramEl->setAttribute("id", param.id);
             paramEl->setAttribute("value", juce::String(
-                ranged->convertTo0to1(param.value), 8));
+                store.convertTo0to1(param.id, param.value), 8));
         }
 
         return deserializeFromXml(xml, PresetKind::sound);

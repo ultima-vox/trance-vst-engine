@@ -1,7 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
-#include "gui/StepSequencer.h"
+#include "ui/StepSequencer.h"
 
 class MidiDragButton final : public juce::TextButton {
 public:
@@ -147,7 +147,7 @@ private:
 
     // Sequencer callback implementation
     struct SequencerCallbacks
-        : public vstengine::gui::StepSequencer::Callbacks {
+        : public vstengine::ui::StepSequencer::Callbacks {
         explicit SequencerCallbacks (VstEngineAudioProcessor& p)
             : processor (p) {}
         void onCopy() override;
@@ -165,12 +165,12 @@ private:
         void onClear() override;
 
         VstEngineAudioProcessor& processor;
-        vstengine::generator::Sequence clipboard;
+        vstengine::sequence::Sequence clipboard;
         bool hasClipboard { false };
     };
 
     std::unique_ptr<SequencerCallbacks> seqCallbacks;
-    std::unique_ptr<vstengine::gui::StepSequencer> sequencer;
+    std::unique_ptr<vstengine::ui::StepSequencer> sequencer;
 
     void timerCallback() override
     { sequencer->setPlayHeadPosition(processor.getCurrentPlayHeadStep()); }

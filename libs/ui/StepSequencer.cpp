@@ -1,6 +1,6 @@
 #include "StepSequencer.h"
 
-namespace vstengine::gui {
+namespace vstengine::ui {
 
 namespace {
 
@@ -31,7 +31,7 @@ juce::Rectangle<int> getStepRect (int stepIndex, int rowIndex,
 
 } // anonymous namespace
 
-StepSequencer::StepSequencer (vstengine::generator::Sequence& seq, Callbacks* cb)
+StepSequencer::StepSequencer (vstengine::sequence::Sequence& seq, Callbacks* cb)
     : sequence (seq), callbacks (cb)
 {
     setWantsKeyboardFocus (true);
@@ -592,4 +592,4 @@ void StepSequencer::mouseWheelMove (const juce::MouseEvent& event,
     }
 }
 
-} // namespace vstengine::gui
+} // namespace vstengine::ui

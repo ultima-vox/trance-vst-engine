@@ -33,7 +33,7 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
           p.keyboardState(),
           juce::MidiKeyboardComponent::horizontalKeyboard),
       seqCallbacks(std::make_unique<SequencerCallbacks>(p)),
-      sequencer(std::make_unique<vstengine::gui::StepSequencer>(
+      sequencer(std::make_unique<vstengine::ui::StepSequencer>(
           p.sequence(), seqCallbacks.get()))
 {
     setSize(920, 876);

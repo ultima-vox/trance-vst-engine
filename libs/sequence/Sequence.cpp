@@ -5,7 +5,7 @@
 #include <cstring>
 #include <random>
 
-namespace vstengine::generator {
+namespace vstengine::sequence {
 
 namespace {
     constexpr uint32_t magicNumber = 0x53514551; // "SEQQ"
@@ -484,5 +484,5 @@ void Sequence::copyTo(Sequence& dest) const
     }
 }
 
-} // namespace vstengine::generator
+} // namespace vstengine::sequence
 

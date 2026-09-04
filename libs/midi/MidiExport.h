@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <cstdint>
-#include "../generator/Sequence.h"
+#include "sequence/Sequence.h"
 
 namespace vstengine::midiexport {
 
@@ -42,6 +42,6 @@ constexpr double pitchBendRangeSemitones = 2.0;
 // Builds the note track for a sequence (note on/off, ratchet sub-notes and
 // slide pitch-bend ramps). Every note-on is matched with a note-off.
 [[nodiscard]] juce::MidiMessageSequence buildSequenceTrack(
-    const vstengine::generator::Sequence& seq, const Options& options);
+    const vstengine::sequence::Sequence& seq, const Options& options);
 
 } // namespace vstengine::midiexport

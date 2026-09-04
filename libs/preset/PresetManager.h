@@ -1,10 +1,30 @@
 #pragma once
-#include <JuceHeader.h>
-#include "../generator/Sequence.h"
-
-class VstEngineAudioProcessor;
+#include <juce_core/juce_core.h>
+#include <juce_data_structures/juce_data_structures.h>
+#include "sequence/Sequence.h"
 
 namespace vstengine {
+
+// Explicit parameter-state bridge between the preset module and the host
+// integration layer (APVTS in the plugin shell). The preset module must not
+// know about the plugin class, the editor or Cubase: everything it needs from
+// the live plugin is expressed by this interface and passed in at
+// construction. Keeps preset save/load unit-testable without a plugin
+// instance and out of the realtime path by construction.
+class PresetStateStore {
+public:
+    virtual ~PresetStateStore() = default;
+
+    // Complete parameter state tree (APVTS copyState equivalent).
+    [[nodiscard]] virtual juce::ValueTree copyState() const = 0;
+    // Atomically install a new complete parameter state tree.
+    virtual void replaceState(juce::ValueTree newState) = 0;
+    // Convert a plain (denormalized) parameter value to the normalized form
+    // used in preset XML, for the parameter with the given ID. Returns the
+    // plain value unchanged when the ID is unknown.
+    [[nodiscard]] virtual float convertTo0to1(const char* parameterId,
+                                              float plainValue) const = 0;
+};
 
 class PresetManager final {
 public:
@@ -14,8 +34,9 @@ public:
 
     enum class PresetKind { sound, full };
 
-    PresetManager(VstEngineAudioProcessor& processor,
-                  vstengine::generator::Sequence& seq);
+    PresetManager(PresetStateStore& stateStore,
+                  vstengine::sequence::Sequence& seq,
+                  juce::File directory = getPresetDirectory());
 
     void saveSoundPreset(const juce::String& name);
     void saveFullPreset(const juce::String& name);
@@ -30,8 +51,8 @@ public:
     juce::String getCurrentPresetName() const { return currentPresetName; }
 
 private:
-    VstEngineAudioProcessor& processor;
-    vstengine::generator::Sequence& sequence;
+    PresetStateStore& store;
+    vstengine::sequence::Sequence& sequence;
     juce::File presetDirectory;
     juce::String currentPresetName;
 

@@ -2,7 +2,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace vstengine::dsp {
+namespace vstengine::bass {
 
 class PsyBassSound final : public juce::SynthesiserSound {
 public:
@@ -131,4 +131,4 @@ private:
     float outputLevel { 1.0f };
 };
 
-} // namespace vstengine::dsp
+} // namespace vstengine::bass

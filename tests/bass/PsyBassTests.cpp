@@ -1,4 +1,4 @@
-#include "dsp/PsyBassVoice.h"
+#include "bass/PsyBassVoice.h"
 #include <cmath>
 #include <iostream>
 
@@ -17,7 +17,7 @@ static int testsPassed = 0;
 
 int main()
 {
-    using namespace vstengine::dsp;
+    using namespace vstengine::bass;
 
     // A Synthesiser is required to manage voice state (currentlyPlayingNote
     // is private). We use a single-voice synthesiser to prove deterministic

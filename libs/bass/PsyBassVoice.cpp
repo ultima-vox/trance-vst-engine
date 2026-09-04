@@ -1,7 +1,7 @@
 #include "PsyBassVoice.h"
 #include <cmath>
 
-namespace vstengine::dsp {
+namespace vstengine::bass {
 
 bool PsyBassVoice::canPlaySound(juce::SynthesiserSound* sound)
 {
@@ -213,4 +213,4 @@ void PsyBassVoice::renderNextBlock(juce::AudioBuffer<float>& output,
     }
 }
 
-} // namespace vstengine::dsp
+} // namespace vstengine::bass

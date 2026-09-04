@@ -1,4 +1,4 @@
-#include "export/MidiExport.h"
+#include "midi/MidiExport.h"
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -50,7 +50,7 @@ void requireNoStuckNotes(const juce::MidiMessageSequence& track)
 
 int main()
 {
-    using namespace vstengine::generator;
+    using namespace vstengine::sequence;
     using vstengine::midiexport::buildSequenceTrack;
     using vstengine::midiexport::Options;
 
@@ -325,7 +325,7 @@ int main()
         ProbabilityState ps { seed };
         bool expectedPlays[16];
         for (int i = 0; i < 16; ++i) {
-            expectedPlays[i] = vstengine::generator::shouldPlayStep(ps, seq[i].probability);
+            expectedPlays[i] = vstengine::sequence::shouldPlayStep(ps, seq[i].probability);
         }
 
         // Build the track and count note-ons per step
@@ -367,7 +367,7 @@ int main()
         ProbabilityState ps { seed };
         int expectedPlays = 0;
         for (int i = 0; i < 32; ++i) {
-            if (vstengine::generator::shouldPlayStep(ps, 0.5f))
+            if (vstengine::sequence::shouldPlayStep(ps, 0.5f))
                 ++expectedPlays;
         }
 

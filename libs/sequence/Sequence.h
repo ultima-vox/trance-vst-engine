@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 
-namespace vstengine::generator {
+namespace vstengine::sequence {
 
 enum class TimingMode : uint8_t {
     sixteenth,
@@ -181,4 +181,4 @@ private:
     int selectedEnd { -1 };
 };
 
-} // namespace vstengine::generator
+} // namespace vstengine::sequence
