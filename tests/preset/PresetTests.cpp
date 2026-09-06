@@ -1,4 +1,5 @@
 #include "preset/PresetManager.h"
+#include "core/KickParameterIds.h"
 #include "core/SoundParameterIds.h"
 #include <juce_core/juce_core.h>
 #include <cstdio>
@@ -36,9 +37,19 @@ public:
             p.setProperty("value", juce::var(0.5f), nullptr);
             state.appendChild(p, nullptr);
         }
+        // Kick engine sound parameters (issue #11 PHASE 5).
+        for (int i = 0; i < vstengine::core::numKickSoundParameterIds; ++i) {
+            auto p = juce::ValueTree("PARAM");
+            p.setProperty(
+                "id", juce::var(vstengine::core::kickSoundParameterIds[i]),
+                nullptr);
+            p.setProperty("value", juce::var(0.5f), nullptr);
+            state.appendChild(p, nullptr);
+        }
         // Global (non-sound) settings present in full state.
         for (const char* id :
-             { "midiMode", "midiChannel", "rootNote", "rngSeed" }) {
+             { "midiMode", "midiChannel", "rootNote", "rngSeed",
+               "kickMidiChannel" }) {
             auto p = juce::ValueTree("PARAM");
             p.setProperty("id", juce::var(id), nullptr);
             p.setProperty("value", juce::var(0.0f), nullptr);
@@ -160,6 +171,96 @@ int main()
         require(!manager.loadFullPreset("Corrupt Me"),
                 "corrupt sequence rejected");
         require(seq.size() == 16, "live sequence untouched on rejection");
+    }
+
+    // 5: Kick factory presets (issue #11 PHASE 5) set kick params only.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+
+        const auto names = manager.getFactoryPresetNames();
+        require(names.contains("Psytrance"), "kick factory preset listed");
+        require(names.contains("Dark Psy"), "dark psy kick preset listed");
+        require(names.contains("Progressive Psy"),
+                "progressive kick preset listed");
+        require(names.contains("Hi-Tech"), "hi-tech kick preset listed");
+        require(names.contains("Classic Trance"),
+                "classic trance kick preset listed");
+
+        require(manager.loadFactoryPreset("Psytrance"),
+                "kick factory preset loads");
+        // convertTo0to1 divides by 10, so 18 st -> 1.8 normalized.
+        require(std::abs(readParam(store.state, "kickPitchStart") - 1.8f)
+                    < 1e-5f,
+                "kick factory sets kickPitchStart");
+        require(readParam(store.state, "drive") == 0.5f,
+                "kick factory leaves bass sound params untouched");
+        require(readParam(store.state, "midiMode") == 0.0f,
+                "kick factory leaves globals untouched");
+
+        // Bass factory presets never touch kick params: the kick value set
+        // by the previous kick preset load must survive unchanged.
+        require(manager.loadFactoryPreset("Tight Rolling"),
+                "bass factory preset still loads");
+        require(std::abs(readParam(store.state, "kickPitchStart") - 1.8f)
+                    < 1e-5f,
+                "bass factory leaves kick params untouched");
+    }
+
+    // 6: Sound preset round-trip includes kick parameters (v1 extension).
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+
+        store.state.getChildWithProperty("id", juce::var("kickPitchEnd"))
+            .setProperty("value", juce::var(0.35f), nullptr);
+        store.state.getChildWithProperty("id", juce::var("drive"))
+            .setProperty("value", juce::var(0.75f), nullptr);
+        manager.saveSoundPreset("Kick Round Trip");
+
+        store.state.getChildWithProperty("id", juce::var("kickPitchEnd"))
+            .setProperty("value", juce::var(0.1f), nullptr);
+        store.state.getChildWithProperty("id", juce::var("drive"))
+            .setProperty("value", juce::var(0.2f), nullptr);
+
+        require(manager.loadSoundPreset("Kick Round Trip"),
+                "sound preset with kick params loads");
+        require(std::abs(readParam(store.state, "kickPitchEnd") - 0.35f)
+                    < 1e-6f,
+                "kick param round-trips through sound preset");
+        require(std::abs(readParam(store.state, "drive") - 0.75f) < 1e-6f,
+                "bass param round-trips through sound preset");
+    }
+
+    // 7: Sound preset XML stays loadable without kick entries (v1 backward
+    //    compatibility: missing kick params keep live values).
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+
+        juce::XmlElement xml("VstEnginePreset");
+        xml.setAttribute("version", 1);
+        xml.setAttribute("type", "sound");
+        xml.createNewChildElement("name")->setText("Legacy Sound");
+        auto* paramsEl = xml.createNewChildElement("parameters");
+        auto* paramsTree = paramsEl->createNewChildElement("PARAMETERS");
+        auto* paramEl = paramsTree->createNewChildElement("PARAM");
+        paramEl->setAttribute("id", "drive");
+        paramEl->setAttribute("value", juce::String(0.9f, 8));
+
+        // Write the pre-kick preset to disk and load it through the regular
+        // file-based loader (same path Cubase restore would take).
+        const auto file = dir.getChildFile("Legacy Sound.xml");
+        file.replaceWithText(xml.toString());
+        require(manager.loadSoundPreset("Legacy Sound"),
+                "pre-kick v1 sound preset loads");
+        require(std::abs(readParam(store.state, "drive") - 0.9f) < 1e-5f,
+                "legacy preset applies bass params");
+        require(readParam(store.state, "kickPitchStart") == 0.5f,
+                "legacy preset keeps live kick values");
     }
 
     dir.deleteRecursively();

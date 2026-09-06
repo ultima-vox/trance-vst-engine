@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "core/KickParameterIds.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/MidiExport.h"
 #include "preset/PresetManager.h"
@@ -48,6 +49,12 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate, const int)
     // then only clears and reuses — no allocation or growth on the realtime
     // thread.
     keyboardMidiScratch.ensureSize(4096);
+
+    // Kick engine: reset voice state for the new rate and preallocate the
+    // scratch buffer used to strip kick-channel note events (same pattern
+    // and same budget as keyboardMidiScratch).
+    kickSynth.prepare(sampleRate);
+    kickMidiScratch.ensureSize(4096);
 }
 
 bool VstEngineAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -139,9 +146,56 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         keyboardMidiScratch, 0, buffer.getNumSamples(), true);
     midi.addEvents(keyboardMidiScratch, 0, buffer.getNumSamples(), 0);
 
+    // Kick engine routing (issue #11 PHASE 5): note events on the kick MIDI
+    // channel (fixed multitimbral mapping: Part 2 / CH 2 = Kick) drive the
+    // synthesized kick and are consumed from the buffer so the bass engine
+    // never sees them. All other channels behave exactly as before. CC 120
+    // (All Sound Off) / CC 123 (All Notes Off) also fast-fade the kick tail.
+    {
+        const auto kickChannel = juce::jlimit(
+            1, 16, static_cast<int>(
+                       apvts.getRawParameterValue("kickMidiChannel")->load()));
+
+        bool kickConsumedEvents = false;
+        kickMidiScratch.clear();
+
+        for (const auto metadata : midi) {
+            const auto message = metadata.getMessage();
+
+            if (message.getChannel() == kickChannel
+                && message.isNoteOnOrOff()) {
+                if (message.isNoteOn(false) && message.getVelocity() > 0)
+                    kickSynth.trigger(message.getVelocity() / 127.0f,
+                                      message.getNoteNumber(),
+                                      metadata.samplePosition);
+                else
+                    kickSynth.release(metadata.samplePosition);
+
+                kickConsumedEvents = true; // consumed, not copied
+                continue;
+            }
+
+            if (message.isController()
+                && (message.getControllerNumber() == 120
+                    || message.getControllerNumber() == 123))
+                kickSynth.release(metadata.samplePosition);
+
+            kickMidiScratch.addEvent(message, metadata.samplePosition);
+        }
+
+        if (kickConsumedEvents)
+            midi.swapWith(kickMidiScratch);
+    }
+
     syncVoiceParameters();
+    syncKickParameters();
 
     synth.renderNextBlock(buffer, midi, 0, buffer.getNumSamples());
+
+    // The kick renders after the bass synth so a note-on and the voice it
+    // triggers land in the same block (sample-accurate offsets are preserved
+    // by the kick's internal trigger queue).
+    kickSynth.render(buffer, buffer.getNumSamples());
 }
 
 void VstEngineAudioProcessor::syncVoiceParameters()
@@ -180,6 +234,28 @@ void VstEngineAudioProcessor::syncVoiceParameters()
             voice->setOutputLevel(outputLevel);
         }
     }
+}
+
+void VstEngineAudioProcessor::syncKickParameters()
+{
+    vstengine::kick::KickParams p;
+    p.pitchStart = apvts.getRawParameterValue("kickPitchStart")->load();
+    p.pitchEnd = apvts.getRawParameterValue("kickPitchEnd")->load();
+    p.pitchDecay = apvts.getRawParameterValue("kickPitchDecay")->load();
+    p.pitchCurve = apvts.getRawParameterValue("kickPitchCurve")->load();
+    p.bodyDecay = apvts.getRawParameterValue("kickBodyDecay")->load();
+    p.tail = apvts.getRawParameterValue("kickTail")->load();
+    p.click = apvts.getRawParameterValue("kickClick")->load();
+    p.clickTone = apvts.getRawParameterValue("kickClickTone")->load();
+    p.drive = apvts.getRawParameterValue("kickDrive")->load();
+    p.clip = apvts.getRawParameterValue("kickClip")->load();
+    p.transient = apvts.getRawParameterValue("kickTransient")->load();
+    p.sub = apvts.getRawParameterValue("kickSub")->load();
+    p.tune = apvts.getRawParameterValue("kickTune")->load();
+    p.phase = apvts.getRawParameterValue("kickPhase")->load();
+    p.outputLevel = apvts.getRawParameterValue("kickOutputLevel")->load();
+
+    kickSynth.setParameters(p);
 }
 
 bool VstEngineAudioProcessor::containsNoteEvents(
@@ -329,6 +405,76 @@ VstEngineAudioProcessor::createParameterLayout()
         juce::ParameterID { "outputLevel", 1 }, "Output Level",
         juce::NormalisableRange<float> { 0.0f, 2.0f, 0.01f, 0.6f },
         1.0f));
+
+    // --- Kick engine (issue #11 PHASE 5, exact parameter set) ---
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickPitchStart", 1 }, "Kick Pitch Start",
+        juce::NormalisableRange<float> { 0.0f, 36.0f, 0.1f }, 12.0f, "st"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickPitchEnd", 1 }, "Kick Pitch End",
+        juce::NormalisableRange<float> { -24.0f, 24.0f, 0.1f }, 0.0f, "st"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickPitchDecay", 1 }, "Kick Pitch Decay",
+        juce::NormalisableRange<float> { 0.001f, 0.5f, 0.001f, 0.4f },
+        0.03f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickPitchCurve", 1 }, "Kick Pitch Curve",
+        juce::NormalisableRange<float> { 0.5f, 8.0f, 0.1f }, 2.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickBodyDecay", 1 }, "Kick Body Decay",
+        juce::NormalisableRange<float> { 0.01f, 2.0f, 0.001f, 0.4f },
+        0.16f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickTail", 1 }, "Kick Tail",
+        juce::NormalisableRange<float> { 0.0f, 4.0f, 0.001f, 0.5f },
+        0.3f, "s"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickClick", 1 }, "Kick Click",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickClickTone", 1 }, "Kick Click Tone",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickDrive", 1 }, "Kick Drive",
+        juce::NormalisableRange<float> { 1.0f, 10.0f, 0.01f }, 1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickClip", 1 }, "Kick Clip",
+        juce::NormalisableRange<float> { 0.1f, 1.0f, 0.005f }, 1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickTransient", 1 }, "Kick Transient",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickSub", 1 }, "Kick Sub",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.4f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickTune", 1 }, "Kick Tune",
+        juce::NormalisableRange<float> { 24.0f, 48.0f, 1.0f }, 36.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickPhase", 1 }, "Kick Phase",
+        juce::NormalisableRange<float> { 0.0f, 360.0f, 1.0f }, 0.0f, "deg"));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "kickOutputLevel", 1 }, "Kick Output Level",
+        juce::NormalisableRange<float> { 0.0f, 2.0f, 0.01f, 0.6f },
+        1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { "kickMidiChannel", 1 },
+        "Kick MIDI Channel",
+        1, 16, 2));
 
     return { params.begin(), params.end() };
 }
