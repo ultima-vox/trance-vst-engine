@@ -49,12 +49,23 @@ C:\\Program Files\\Common Files\\VST3
 
 ## Architecture direction
 
+Modular architecture per issue #11 (independent CMake targets):
+
 ```text
-src/
-  dsp/          synthesis and audio DSP
-  generator/    musical pattern generation
-  Plugin*       VST/JUCE integration and UI
+apps/vst3/      PluginProcessor (thin VST3/APVTS host adapter), PluginEditor (composition only)
+libs/core/      shared stable IDs/constants          -> vst_core
+libs/sequence/  canonical Sequence/Step/timing model -> vst_sequence
+libs/transport/ pure PPQ/grid musical-time math      -> vst_transport
+libs/midi/      source-mode policy, MIDI export, generated-note scheduler -> vst_midi
+libs/bass/      psy-bass DSP voice                   -> vst_bass
+libs/preset/    preset format/filesystem/migration   -> vst_preset
+libs/generator/ seed-based pattern generation        -> vst_generator
+libs/ui/        reusable JUCE components             -> vst_ui
+tests/          one test executable per module + tests/integration/
 ```
+
+Dependency rule: lower-level modules -> shell. The shell (PluginProcessor/PluginEditor)
+links the module libraries; lower modules never depend on the shell.
 
 Planned engines:
 
@@ -112,7 +123,7 @@ Generated playback is synchronized to the host's musical position:
   quarter-note position against the canonical `stepsPerQuarterNote()` grid.
   This gives bar-accurate alignment at any start locator, immediate realign on
   seek/jump, correct wrap on cycle/loop, and musical alignment that survives
-  BPM changes. The alignment math lives in `src/generator/PpqSync.h` and is
+  BPM changes. The alignment math lives in `libs/transport/PpqSync.h` and is
   unit-tested (`transport_sync_tests`).
 - **Fallback.** If a host does not provide PPQ, playback falls back to the
   historical BPM-derived free-running step timer (start at step 0, no locator
@@ -125,7 +136,7 @@ reproduces the same decisions as MIDI export.
 
 ## MIDI source isolation
 
-The generator decision (`src/midi/SourceSelector.h`, unit-tested by
+The generator decision (`libs/midi/SourceSelector.h`, unit-tested by
 `midi_source_tests`) only ever observes **external host notes** and **GUI
 keyboard notes**:
 
