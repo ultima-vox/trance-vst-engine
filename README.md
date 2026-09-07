@@ -13,6 +13,11 @@ Early vertical slice (0.1.x). The current target is a reliable VST3 instrument i
 - Host-tempo-aware 16-step rolling bass sequencer
 - Deterministic dark-psy pattern generator
 - Dedicated psy-bass synth voice with phase reset and fast pitch envelope
+- Synthesized kick engine (issue #11 Phase 5): pitch sweep, body/tail,
+  click with tone control, drive, clip, transient shaping, sub layer, tune,
+  phase reset and output level - no samples, fully generated
+- Kick factory presets: Psytrance, Dark Psy, Progressive Psy, Hi-Tech,
+  Classic Trance
 - Automatable Drive and Release parameters
 - Plug-in state save/restore
 - Minimal native JUCE editor
@@ -113,6 +118,29 @@ The exported clip uses:
 - 16th-note step spacing
 
 Cubase can then place/import the MIDI clip into the project for normal piano-roll editing.
+
+## Synthesized kick engine (issue #11 Phase 5)
+
+The kick is a fully synthesized one-shot voice (`libs/kick`, no samples):
+
+- **Pitch Start / Pitch End / Pitch Decay / Pitch Curve** - exponential pitch
+  sweep from the attack pitch down to the tuned fundamental.
+- **Body Decay / Tail** - body envelope decay plus a slower sub-layer tail.
+- **Click / Click Tone** - deterministic attack transient; Tone morphs it from
+  bright noise to a tonal thump.
+- **Drive / Clip** - gain-compensated saturation then an optional hard-clip
+  ceiling.
+- **Transient** - attack softness (0 = instant, 1 = soft ramp).
+- **Sub** - sub-octave layer amount.
+- **Tune / Phase / Output Level** - fundamental as a MIDI note, deterministic
+  oscillator start phase, output level.
+
+Routing: the kick listens on its own MIDI channel (**Kick MIDI Channel**,
+default 2 per the fixed Part 2 / CH 2 mapping). Note events on that channel
+play the kick and never reach the bass engine; the piano roll transposes
+relative to C4 while Tune stays the anchor. CC 120/123 fast-fade the tail so
+no note can hang. Factory kick presets: Psytrance, Dark Psy, Progressive Psy,
+Hi-Tech, Classic Trance.
 
 ## Host synchronization
 

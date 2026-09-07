@@ -52,6 +52,13 @@ target_include_directories(vst_bass PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_bass PUBLIC
   juce::juce_audio_basics juce::juce_audio_processors)
 
+# kick: synthesized kick DSP voice (pitch sweep, body/tail, click, drive,
+# clip, transient, sub layer). Issue #11 PHASE 5.
+add_library(vst_kick STATIC
+  libs/kick/KickSynth.cpp libs/kick/KickSynth.h)
+target_include_directories(vst_kick PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_kick PUBLIC juce::juce_audio_basics)
+
 # preset: preset format, filesystem, factory/user distinction, migration.
 add_library(vst_preset STATIC
   libs/preset/PresetManager.cpp libs/preset/PresetManager.h)
@@ -101,7 +108,7 @@ target_compile_definitions(VstEngine PUBLIC
 target_link_libraries(VstEngine PRIVATE
   juce::juce_audio_utils juce::juce_dsp
   vst_core vst_sequence vst_transport vst_midi
-  vst_bass vst_preset vst_generator vst_ui)
+  vst_bass vst_kick vst_preset vst_generator vst_ui)
 
 if(MSVC)
   target_compile_options(VstEngine PRIVATE /W4 /permissive-)
@@ -140,6 +147,10 @@ add_test(NAME generated_note_scheduler_tests
 add_executable(psy_bass_tests tests/bass/PsyBassTests.cpp)
 target_link_libraries(psy_bass_tests PRIVATE vst_bass)
 add_test(NAME psy_bass_tests COMMAND psy_bass_tests)
+
+add_executable(kick_tests tests/kick/KickSynthTests.cpp)
+target_link_libraries(kick_tests PRIVATE vst_kick)
+add_test(NAME kick_tests COMMAND kick_tests)
 
 add_executable(preset_tests tests/preset/PresetTests.cpp)
 target_link_libraries(preset_tests PRIVATE vst_preset)

@@ -84,6 +84,24 @@ private:
     juce::Slider driveSlider;
     juce::Slider outputLevelSlider;
 
+    // Kick engine (issue #11 PHASE 5)
+    juce::Slider kickPitchStartSlider;
+    juce::Slider kickPitchEndSlider;
+    juce::Slider kickPitchDecaySlider;
+    juce::Slider kickPitchCurveSlider;
+    juce::Slider kickBodyDecaySlider;
+    juce::Slider kickTailSlider;
+    juce::Slider kickClickSlider;
+    juce::Slider kickClickToneSlider;
+    juce::Slider kickDriveSlider;
+    juce::Slider kickClipSlider;
+    juce::Slider kickTransientSlider;
+    juce::Slider kickSubSlider;
+    juce::Slider kickTuneSlider;
+    juce::Slider kickPhaseSlider;
+    juce::Slider kickOutputLevelSlider;
+    juce::Slider kickMidiChannelSlider;
+
     // Labels
     juce::Label titleLabel;
     juce::Label presetLabel;
@@ -108,6 +126,23 @@ private:
     juce::Label pitchEnvCurveLabel;
     juce::Label driveLabel;
     juce::Label outputLevelLabel;
+    juce::Label kickGroupLabel;
+    juce::Label kickPitchStartLabel;
+    juce::Label kickPitchEndLabel;
+    juce::Label kickPitchDecayLabel;
+    juce::Label kickPitchCurveLabel;
+    juce::Label kickBodyDecayLabel;
+    juce::Label kickTailLabel;
+    juce::Label kickClickLabel;
+    juce::Label kickClickToneLabel;
+    juce::Label kickDriveLabel;
+    juce::Label kickClipLabel;
+    juce::Label kickTransientLabel;
+    juce::Label kickSubLabel;
+    juce::Label kickTuneLabel;
+    juce::Label kickPhaseLabel;
+    juce::Label kickOutputLevelLabel;
+    juce::Label kickMidiChannelLabel;
 
     using SliderAttachment =
         juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -144,6 +179,22 @@ private:
     std::unique_ptr<SliderAttachment> pitchEnvCurveAttachment;
     std::unique_ptr<SliderAttachment> driveAttachment;
     std::unique_ptr<SliderAttachment> outputLevelAttachment;
+    std::unique_ptr<SliderAttachment> kickPitchStartAttachment;
+    std::unique_ptr<SliderAttachment> kickPitchEndAttachment;
+    std::unique_ptr<SliderAttachment> kickPitchDecayAttachment;
+    std::unique_ptr<SliderAttachment> kickPitchCurveAttachment;
+    std::unique_ptr<SliderAttachment> kickBodyDecayAttachment;
+    std::unique_ptr<SliderAttachment> kickTailAttachment;
+    std::unique_ptr<SliderAttachment> kickClickAttachment;
+    std::unique_ptr<SliderAttachment> kickClickToneAttachment;
+    std::unique_ptr<SliderAttachment> kickDriveAttachment;
+    std::unique_ptr<SliderAttachment> kickClipAttachment;
+    std::unique_ptr<SliderAttachment> kickTransientAttachment;
+    std::unique_ptr<SliderAttachment> kickSubAttachment;
+    std::unique_ptr<SliderAttachment> kickTuneAttachment;
+    std::unique_ptr<SliderAttachment> kickPhaseAttachment;
+    std::unique_ptr<SliderAttachment> kickOutputLevelAttachment;
+    std::unique_ptr<SliderAttachment> kickMidiChannelAttachment;
 
     // Sequencer callback implementation
     struct SequencerCallbacks

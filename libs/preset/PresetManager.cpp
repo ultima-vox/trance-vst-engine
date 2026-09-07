@@ -1,4 +1,5 @@
 #include "PresetManager.h"
+#include "core/KickParameterIds.h"
 #include "core/SoundParameterIds.h"
 #include <array>
 #include <iterator>
@@ -106,6 +107,63 @@ static const FactoryPreset factoryPresets[] = {
         { "pitchEnvCurve", 2.2f }, { "outputLevel", 0.9f } } } },
 };
 
+// Factory kick presets (issue #11 PHASE 5): kick engine sound parameters
+// only. Parameter order must match vstengine::core::kickSoundParameterIds.
+// These are real parameter sets for the synthesized kick - no sample
+// libraries and no non-existent functionality.
+struct KickFactoryPreset {
+    const char* name;
+    std::array<FactorySoundParam, 15> params;
+};
+
+static const KickFactoryPreset kickFactoryPresets[] = {
+    { "Psytrance", { {
+        { "kickPitchStart", 18.0f }, { "kickPitchEnd", 0.0f },
+        { "kickPitchDecay", 0.025f }, { "kickPitchCurve", 2.5f },
+        { "kickBodyDecay", 0.12f }, { "kickTail", 0.2f },
+        { "kickClick", 0.55f }, { "kickClickTone", 0.5f },
+        { "kickDrive", 2.0f }, { "kickClip", 1.0f },
+        { "kickTransient", 0.35f }, { "kickSub", 0.45f },
+        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
+        { "kickOutputLevel", 1.0f } } } },
+    { "Dark Psy", { {
+        { "kickPitchStart", 24.0f }, { "kickPitchEnd", -2.0f },
+        { "kickPitchDecay", 0.02f }, { "kickPitchCurve", 3.0f },
+        { "kickBodyDecay", 0.1f }, { "kickTail", 0.15f },
+        { "kickClick", 0.7f }, { "kickClickTone", 0.6f },
+        { "kickDrive", 3.0f }, { "kickClip", 0.9f },
+        { "kickTransient", 0.2f }, { "kickSub", 0.5f },
+        { "kickTune", 35.0f }, { "kickPhase", 0.0f },
+        { "kickOutputLevel", 1.0f } } } },
+    { "Progressive Psy", { {
+        { "kickPitchStart", 10.0f }, { "kickPitchEnd", 0.0f },
+        { "kickPitchDecay", 0.04f }, { "kickPitchCurve", 2.0f },
+        { "kickBodyDecay", 0.22f }, { "kickTail", 0.45f },
+        { "kickClick", 0.35f }, { "kickClickTone", 0.45f },
+        { "kickDrive", 1.5f }, { "kickClip", 1.0f },
+        { "kickTransient", 0.55f }, { "kickSub", 0.6f },
+        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
+        { "kickOutputLevel", 0.95f } } } },
+    { "Hi-Tech", { {
+        { "kickPitchStart", 30.0f }, { "kickPitchEnd", -4.0f },
+        { "kickPitchDecay", 0.018f }, { "kickPitchCurve", 4.0f },
+        { "kickBodyDecay", 0.09f }, { "kickTail", 0.1f },
+        { "kickClick", 0.85f }, { "kickClickTone", 0.7f },
+        { "kickDrive", 4.5f }, { "kickClip", 0.8f },
+        { "kickTransient", 0.1f }, { "kickSub", 0.35f },
+        { "kickTune", 37.0f }, { "kickPhase", 0.0f },
+        { "kickOutputLevel", 1.0f } } } },
+    { "Classic Trance", { {
+        { "kickPitchStart", 14.0f }, { "kickPitchEnd", 0.0f },
+        { "kickPitchDecay", 0.05f }, { "kickPitchCurve", 1.5f },
+        { "kickBodyDecay", 0.3f }, { "kickTail", 0.7f },
+        { "kickClick", 0.3f }, { "kickClickTone", 0.4f },
+        { "kickDrive", 1.2f }, { "kickClip", 1.0f },
+        { "kickTransient", 0.7f }, { "kickSub", 0.65f },
+        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
+        { "kickOutputLevel", 0.9f } } } },
+};
+
 PresetManager::PresetManager(PresetStateStore& stateStore,
                              vstengine::sequence::Sequence& seq,
                              juce::File directory)
@@ -135,10 +193,13 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind)
     xml.setAttribute("type", kind == PresetKind::sound ? "sound" : "full");
     xml.createNewChildElement("name")->addTextElement(currentPresetName);
 
-    // Sound preset: psy-bass engine sound parameters ONLY (no sequence, no
-    // global MIDI/generator state). Full preset: complete APVTS state (which
-    // includes the global MIDI/generator settings) plus the canonical
-    // sequence - all Phase 0-4 state required by #11.
+    // Sound preset: engine sound parameters ONLY (psy-bass + kick, issue #11
+    // PHASE 5) - no sequence, no global MIDI/generator state. Kick parameters
+    // are appended into the same PARAMETERS element with their own IDs; the
+    // loader applies per-ID and skips missing entries, so pre-kick v1 presets
+    // load unchanged and keep the live kick values. Full preset: complete
+    // APVTS state (which includes the global MIDI/generator settings) plus
+    // the canonical sequence - all Phase 0-5 state required by #11.
     auto* paramsEl = xml.createNewChildElement("parameters");
     auto state = store.copyState();
 
@@ -147,6 +208,12 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind)
         for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
             const auto child = state.getChildWithProperty(
                 "id", juce::var(vstengine::core::soundParameterIds[i]));
+            if (child.isValid())
+                paramsTree->addChildElement(child.createXml().release());
+        }
+        for (int i = 0; i < vstengine::core::numKickSoundParameterIds; ++i) {
+            const auto child = state.getChildWithProperty(
+                "id", juce::var(vstengine::core::kickSoundParameterIds[i]));
             if (child.isValid())
                 paramsTree->addChildElement(child.createXml().release());
         }
@@ -208,10 +275,22 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
 
     if (typeAttr == "sound") {
         // Apply only the engine sound parameters onto the current state;
-        // sequence, MIDI and generator settings are left untouched.
+        // sequence, MIDI and generator settings are left untouched. Kick
+        // parameters are applied per-ID as well; pre-kick v1 presets contain
+        // no kick entries and then simply keep the live kick values.
         auto newState = store.copyState();
         for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
             const auto id = juce::var(vstengine::core::soundParameterIds[i]);
+            const auto src = restored.getChildWithProperty("id", id);
+            if (!src.isValid())
+                continue;
+            auto dst = newState.getChildWithProperty("id", id);
+            if (dst.isValid())
+                dst.copyPropertiesFrom(src, nullptr);
+        }
+        for (int i = 0; i < vstengine::core::numKickSoundParameterIds; ++i) {
+            const auto id =
+                juce::var(vstengine::core::kickSoundParameterIds[i]);
             const auto src = restored.getChildWithProperty("id", id);
             if (!src.isValid())
                 continue;
@@ -351,33 +430,53 @@ juce::StringArray PresetManager::getFactoryPresetNames() const {
     juce::StringArray names;
     for (const auto& preset : factoryPresets)
         names.add(preset.name);
+    for (const auto& preset : kickFactoryPresets)
+        names.add(preset.name);
     return names;
 }
 
 bool PresetManager::loadFactoryPreset(const juce::String& name) {
-    for (const auto& preset : factoryPresets) {
-        if (name != preset.name)
-            continue;
-
-        // Build a v1 sound preset from the plain parameter values. Values are
-        // normalized with each parameter's own range so the resulting XML is
-        // identical in format to a user-saved Sound preset.
+    // Build a v1 sound preset from plain parameter values. Values are
+    // normalized with each parameter's own range so the resulting XML is
+    // identical in format to a user-saved Sound preset.
+    auto buildPresetXml = [this](const char* presetName,
+                                 const FactorySoundParam* params,
+                                 int numParams) {
         juce::XmlElement xml("VstEnginePreset");
         xml.setAttribute("version", currentPresetVersion);
         xml.setAttribute("type", "sound");
-        xml.createNewChildElement("name")->setText(preset.name);
+        xml.createNewChildElement("name")->setText(presetName);
         auto* paramsEl = xml.createNewChildElement("parameters");
         auto* paramsTree = paramsEl->createNewChildElement("PARAMETERS");
 
-        for (const auto& param : preset.params) {
+        for (int i = 0; i < numParams; ++i) {
             auto* paramEl = paramsTree->createNewChildElement("PARAM");
-            paramEl->setAttribute("id", param.id);
+            paramEl->setAttribute("id", params[i].id);
             paramEl->setAttribute("value", juce::String(
-                store.convertTo0to1(param.id, param.value), 8));
+                store.convertTo0to1(params[i].id, params[i].value), 8));
         }
 
+        return xml;
+    };
+
+    for (const auto& preset : factoryPresets) {
+        if (name != preset.name)
+            continue;
+        const auto xml = buildPresetXml(
+            preset.name, preset.params.data(),
+            static_cast<int>(preset.params.size()));
         return deserializeFromXml(xml, PresetKind::sound);
     }
+
+    for (const auto& preset : kickFactoryPresets) {
+        if (name != preset.name)
+            continue;
+        const auto xml = buildPresetXml(
+            preset.name, preset.params.data(),
+            static_cast<int>(preset.params.size()));
+        return deserializeFromXml(xml, PresetKind::sound);
+    }
+
     return false;
 }
 

@@ -36,7 +36,7 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
       sequencer(std::make_unique<vstengine::ui::StepSequencer>(
           p.sequence(), seqCallbacks.get()))
 {
-    setSize(920, 876);
+    setSize(920, 1300);
     addAndMakeVisible(*sequencer);
     startTimer(33);
 
@@ -136,6 +136,21 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         addAndMakeVisible(slider);
     }
 
+    // --- Kick engine rotaries (issue #11 PHASE 5) ---
+    for (auto* slider : { &kickPitchStartSlider, &kickPitchEndSlider,
+                          &kickPitchDecaySlider, &kickPitchCurveSlider,
+                          &kickBodyDecaySlider, &kickTailSlider,
+                          &kickClickSlider, &kickClickToneSlider,
+                          &kickDriveSlider, &kickClipSlider,
+                          &kickTransientSlider, &kickSubSlider,
+                          &kickTuneSlider, &kickPhaseSlider,
+                          &kickOutputLevelSlider }) {
+        configureRotarySlider(*slider);
+        addAndMakeVisible(slider);
+    }
+    configureSmallSlider(kickMidiChannelSlider);
+    addAndMakeVisible(kickMidiChannelSlider);
+
     // --- Labels ---
     configureLabel(presetLabel, "PRESET");
     configureLabel(midiModeLabel, "MIDI SOURCE");
@@ -159,6 +174,23 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     configureLabel(pitchEnvCurveLabel, "P CURVE");
     configureLabel(driveLabel, "DRIVE");
     configureLabel(outputLevelLabel, "OUTPUT");
+    configureLabel(kickGroupLabel, "KICK");
+    configureLabel(kickPitchStartLabel, "P START");
+    configureLabel(kickPitchEndLabel, "P END");
+    configureLabel(kickPitchDecayLabel, "P DECAY");
+    configureLabel(kickPitchCurveLabel, "P CURVE");
+    configureLabel(kickBodyDecayLabel, "BODY");
+    configureLabel(kickTailLabel, "TAIL");
+    configureLabel(kickClickLabel, "CLICK");
+    configureLabel(kickClickToneLabel, "C TONE");
+    configureLabel(kickDriveLabel, "K DRIVE");
+    configureLabel(kickClipLabel, "CLIP");
+    configureLabel(kickTransientLabel, "TRANS");
+    configureLabel(kickSubLabel, "SUB");
+    configureLabel(kickTuneLabel, "TUNE");
+    configureLabel(kickPhaseLabel, "PHASE");
+    configureLabel(kickOutputLevelLabel, "K OUTPUT");
+    configureLabel(kickMidiChannelLabel, "KICK MIDI CH");
 
     for (auto* label : { &presetLabel, &midiModeLabel, &midiChannelLabel,
                          &rootNoteLabel, &rngSeedLabel,
@@ -169,7 +201,15 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
                          &ampSustainLabel, &ampReleaseLabel,
                          &pitchEnvAmountLabel, &pitchEnvTimeLabel,
                          &pitchEnvCurveLabel, &driveLabel,
-                         &outputLevelLabel })
+                         &outputLevelLabel,
+                         &kickGroupLabel, &kickPitchStartLabel,
+                         &kickPitchEndLabel, &kickPitchDecayLabel,
+                         &kickPitchCurveLabel, &kickBodyDecayLabel,
+                         &kickTailLabel, &kickClickLabel,
+                         &kickClickToneLabel, &kickDriveLabel,
+                         &kickClipLabel, &kickTransientLabel,
+                         &kickSubLabel, &kickTuneLabel, &kickPhaseLabel,
+                         &kickOutputLevelLabel, &kickMidiChannelLabel })
         addAndMakeVisible(label);
 
     // --- Attachments ---
@@ -199,6 +239,30 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         attachSlider(pitchEnvCurveSlider, "pitchEnvCurve");
     driveAttachment = attachSlider(driveSlider, "drive");
     outputLevelAttachment = attachSlider(outputLevelSlider, "outputLevel");
+    kickPitchStartAttachment =
+        attachSlider(kickPitchStartSlider, "kickPitchStart");
+    kickPitchEndAttachment = attachSlider(kickPitchEndSlider, "kickPitchEnd");
+    kickPitchDecayAttachment =
+        attachSlider(kickPitchDecaySlider, "kickPitchDecay");
+    kickPitchCurveAttachment =
+        attachSlider(kickPitchCurveSlider, "kickPitchCurve");
+    kickBodyDecayAttachment =
+        attachSlider(kickBodyDecaySlider, "kickBodyDecay");
+    kickTailAttachment = attachSlider(kickTailSlider, "kickTail");
+    kickClickAttachment = attachSlider(kickClickSlider, "kickClick");
+    kickClickToneAttachment =
+        attachSlider(kickClickToneSlider, "kickClickTone");
+    kickDriveAttachment = attachSlider(kickDriveSlider, "kickDrive");
+    kickClipAttachment = attachSlider(kickClipSlider, "kickClip");
+    kickTransientAttachment =
+        attachSlider(kickTransientSlider, "kickTransient");
+    kickSubAttachment = attachSlider(kickSubSlider, "kickSub");
+    kickTuneAttachment = attachSlider(kickTuneSlider, "kickTune");
+    kickPhaseAttachment = attachSlider(kickPhaseSlider, "kickPhase");
+    kickOutputLevelAttachment =
+        attachSlider(kickOutputLevelSlider, "kickOutputLevel");
+    kickMidiChannelAttachment =
+        attachSlider(kickMidiChannelSlider, "kickMidiChannel");
 }
 
 void VstEngineAudioProcessorEditor::SequencerCallbacks::onCopy()
@@ -287,16 +351,18 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour::fromRGB(185, 164, 105));
     g.drawLine(24.0f, 262.0f,
                static_cast<float>(getWidth() - 24), 262.0f, 1.0f);
+    g.drawLine(24.0f, 700.0f,
+               static_cast<float>(getWidth() - 24), 700.0f, 1.0f);
 
     g.setColour(juce::Colours::white.withAlpha(0.55f));
     g.setFont(13.0f);
     g.drawText(
         "AUTO: piano roll wins when MIDI notes are present; otherwise generator.",
-        40, 826, getWidth() - 80, 22,
+        40, 1256, getWidth() - 80, 22,
         juce::Justification::centredLeft);
     g.drawText(
         "Generator MIDI is exposed to the host for recording/routing; drag exports a MIDI clip.",
-        40, 846, getWidth() - 80, 22,
+        40, 1276, getWidth() - 80, 22,
         juce::Justification::centredLeft);
 }
 
@@ -377,8 +443,63 @@ void VstEngineAudioProcessorEditor::resized()
     outputGroupLabel.setBounds(startX + 4 * (colW + colGap), 558,
                                colW * 3 + colGap, 18);
 
-    midiDragButton.setBounds(40, 702, 240, 32);
-    pianoKeyboard.setBounds(40, 742, w - 80, 78);
+    // Kick parameter grid: same 7-column grid, 3 rows (15 rotaries + CH).
+    constexpr int kickRowY1 = 744;
+    constexpr int kickRowY2 = 870;
+    constexpr int kickRowY3 = 996;
+
+    const Slot kickRow1[] = {
+        { &kickPitchStartSlider, &kickPitchStartLabel },
+        { &kickPitchEndSlider, &kickPitchEndLabel },
+        { &kickPitchDecaySlider, &kickPitchDecayLabel },
+        { &kickPitchCurveSlider, &kickPitchCurveLabel },
+        { &kickBodyDecaySlider, &kickBodyDecayLabel },
+        { &kickTailSlider, &kickTailLabel },
+        { &kickClickSlider, &kickClickLabel },
+    };
+    const Slot kickRow2[] = {
+        { &kickClickToneSlider, &kickClickToneLabel },
+        { &kickDriveSlider, &kickDriveLabel },
+        { &kickClipSlider, &kickClipLabel },
+        { &kickTransientSlider, &kickTransientLabel },
+        { &kickSubSlider, &kickSubLabel },
+        { &kickTuneSlider, &kickTuneLabel },
+        { &kickPhaseSlider, &kickPhaseLabel },
+    };
+    const Slot kickRow3[] = {
+        { &kickOutputLevelSlider, &kickOutputLevelLabel },
+        { nullptr, nullptr },
+        { nullptr, nullptr },
+        { nullptr, nullptr },
+        { nullptr, nullptr },
+        { nullptr, nullptr },
+        { nullptr, nullptr },
+    };
+
+    for (int i = 0; i < numCols; ++i) {
+        const int x = startX + i * (colW + colGap);
+        if (kickRow1[i].slider != nullptr) {
+            kickRow1[i].label->setBounds(x, kickRowY1 - 18, colW, 16);
+            kickRow1[i].slider->setBounds(x, kickRowY1, colW, 96);
+        }
+        if (kickRow2[i].slider != nullptr) {
+            kickRow2[i].label->setBounds(x, kickRowY2 - 18, colW, 16);
+            kickRow2[i].slider->setBounds(x, kickRowY2, colW, 96);
+        }
+        if (kickRow3[i].slider != nullptr) {
+            kickRow3[i].label->setBounds(x, kickRowY3 - 18, colW, 16);
+            kickRow3[i].slider->setBounds(x, kickRowY3, colW, 96);
+        }
+    }
+
+    kickGroupLabel.setBounds(startX, 706, colW * 4 + colGap * 3, 18);
+    kickMidiChannelLabel.setBounds(
+        startX + 2 * (colW + colGap), kickRowY3 - 18, colW, 16);
+    kickMidiChannelSlider.setBounds(
+        startX + 2 * (colW + colGap) + 8, kickRowY3, colW - 16, 28);
+
+    midiDragButton.setBounds(40, 1130, 240, 32);
+    pianoKeyboard.setBounds(40, 1170, w - 80, 78);
 }
 
 juce::AudioProcessorEditor*

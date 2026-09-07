@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include <memory>
 #include "bass/PsyBassVoice.h"
+#include "kick/KickSynth.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/SourceSelector.h"
 #include "preset/PresetManager.h"
@@ -29,7 +30,9 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.1; }
+    // Host-visible tail: the kick engine may ring for up to a few seconds
+    // (Tail up to 4 s), so the host keeps rendering us after notes stop.
+    double getTailLengthSeconds() const override { return 4.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -75,6 +78,7 @@ private:
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void syncVoiceParameters();
+    void syncKickParameters();
     void seedInitialSequence();
     void requestVoiceGlide(int noteNumber, float glideSeconds) noexcept;
     void clearVoiceGlideRequests() noexcept;
@@ -83,6 +87,9 @@ private:
     bool keyboardHasActiveNotes() const noexcept;
 
     juce::Synthesiser synth;
+    // Synthesized kick voice (issue #11 PHASE 5). Notes on the kick MIDI
+    // channel are routed here and consumed before the bass synth runs.
+    vstengine::kick::KickSynth kickSynth;
     juce::MidiKeyboardState midiKeyboardState;
     juce::AudioProcessorValueTreeState apvts;
     vstengine::sequence::Sequence sequenceData;
@@ -97,6 +104,10 @@ private:
     // callback never constructs a local MidiBuffer or grows one past this
     // reserved capacity. Capacity is reserved once in prepareToPlay.
     juce::MidiBuffer keyboardMidiScratch;
+    // Same realtime-safety pattern as keyboardMidiScratch: preallocated in
+    // prepareToPlay, cleared and reused per block when kick-channel note
+    // events must be removed from the block buffer before the bass synth runs.
+    juce::MidiBuffer kickMidiScratch;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VstEngineAudioProcessor)
 };
