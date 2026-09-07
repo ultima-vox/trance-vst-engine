@@ -102,6 +102,13 @@ private:
     juce::Slider kickOutputLevelSlider;
     juce::Slider kickMidiChannelSlider;
 
+    // Kick/bass match (issue #11 PHASE 6)
+    juce::TextButton matchAnalyzeButton { "ANALYZE MATCH" };
+    juce::TextButton matchApplyButton { "APPLY" };
+    juce::Slider matchTimingSlider;
+    juce::Label matchReportLabel1;
+    juce::Label matchReportLabel2;
+
     // Labels
     juce::Label titleLabel;
     juce::Label presetLabel;
@@ -143,6 +150,9 @@ private:
     juce::Label kickPhaseLabel;
     juce::Label kickOutputLevelLabel;
     juce::Label kickMidiChannelLabel;
+    juce::Label matchGroupLabel;
+    juce::Label matchTimingLabel;
+    juce::Label matchHintLabel;
 
     using SliderAttachment =
         juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -195,6 +205,11 @@ private:
     std::unique_ptr<SliderAttachment> kickPhaseAttachment;
     std::unique_ptr<SliderAttachment> kickOutputLevelAttachment;
     std::unique_ptr<SliderAttachment> kickMidiChannelAttachment;
+    std::unique_ptr<SliderAttachment> matchTimingAttachment;
+
+    // Last kick/bass analysis result (message thread, editor-owned).
+    vstengine::match::MatchReport lastMatchReport {};
+    bool hasMatchReport { false };
 
     // Sequencer callback implementation
     struct SequencerCallbacks

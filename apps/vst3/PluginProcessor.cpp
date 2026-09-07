@@ -151,12 +151,25 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // synthesized kick and are consumed from the buffer so the bass engine
     // never sees them. All other channels behave exactly as before. CC 120
     // (All Sound Off) / CC 123 (All Notes Off) also fast-fade the kick tail.
+    // Bass timing offset (issue #11 PHASE 6): note events on non-kick
+    // channels may be delayed up to 16 ms (bounded match adjustment),
+    // sample-accurate within the block and realtime-safe (int math only).
     {
         const auto kickChannel = juce::jlimit(
             1, 16, static_cast<int>(
                        apvts.getRawParameterValue("kickMidiChannel")->load()));
 
+        const int bassTimingOffsetSamples = static_cast<int>(std::lround(
+            juce::jlimit(
+                0, 16,
+                static_cast<int>(
+                    apvts.getRawParameterValue("matchBassTimingOffsetMs")
+                        ->load()))
+            * currentSampleRate / 1000.0));
+        const int blockSamples = buffer.getNumSamples();
+
         bool kickConsumedEvents = false;
+        bool timingShifted = false;
         kickMidiScratch.clear();
 
         for (const auto metadata : midi) {
@@ -180,10 +193,21 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                     || message.getControllerNumber() == 123))
                 kickSynth.release(metadata.samplePosition);
 
-            kickMidiScratch.addEvent(message, metadata.samplePosition);
+            int samplePosition = metadata.samplePosition;
+            if (bassTimingOffsetSamples > 0 && message.isNoteOnOrOff()) {
+                const int shifted = samplePosition + bassTimingOffsetSamples;
+                if (shifted >= blockSamples) {
+                    // Cannot delay across a block boundary: keep as-is.
+                } else if (shifted != samplePosition) {
+                    samplePosition = shifted;
+                    timingShifted = true;
+                }
+            }
+
+            kickMidiScratch.addEvent(message, samplePosition);
         }
 
-        if (kickConsumedEvents)
+        if (kickConsumedEvents || timingShifted)
             midi.swapWith(kickMidiScratch);
     }
 
@@ -256,6 +280,82 @@ void VstEngineAudioProcessor::syncKickParameters()
     p.outputLevel = apvts.getRawParameterValue("kickOutputLevel")->load();
 
     kickSynth.setParameters(p);
+}
+
+vstengine::match::MatchReport VstEngineAudioProcessor::analyzeKickBassMatch()
+{
+    vstengine::kick::KickParams kick;
+    kick.pitchStart = apvts.getRawParameterValue("kickPitchStart")->load();
+    kick.pitchEnd = apvts.getRawParameterValue("kickPitchEnd")->load();
+    kick.pitchDecay = apvts.getRawParameterValue("kickPitchDecay")->load();
+    kick.pitchCurve = apvts.getRawParameterValue("kickPitchCurve")->load();
+    kick.bodyDecay = apvts.getRawParameterValue("kickBodyDecay")->load();
+    kick.tail = apvts.getRawParameterValue("kickTail")->load();
+    kick.click = apvts.getRawParameterValue("kickClick")->load();
+    kick.clickTone = apvts.getRawParameterValue("kickClickTone")->load();
+    kick.drive = apvts.getRawParameterValue("kickDrive")->load();
+    kick.clip = apvts.getRawParameterValue("kickClip")->load();
+    kick.transient = apvts.getRawParameterValue("kickTransient")->load();
+    kick.sub = apvts.getRawParameterValue("kickSub")->load();
+    kick.tune = apvts.getRawParameterValue("kickTune")->load();
+    kick.phase = apvts.getRawParameterValue("kickPhase")->load();
+    kick.outputLevel = apvts.getRawParameterValue("kickOutputLevel")->load();
+
+    vstengine::match::BassRenderParams bass;
+    bass.drive = apvts.getRawParameterValue("drive")->load();
+    bass.release = apvts.getRawParameterValue("release")->load();
+    bass.ampAttack = apvts.getRawParameterValue("ampAttack")->load();
+    bass.ampDecay = apvts.getRawParameterValue("ampDecay")->load();
+    bass.ampSustain = apvts.getRawParameterValue("ampSustain")->load();
+    bass.filterCutoff = apvts.getRawParameterValue("filterCutoff")->load();
+    bass.filterResonance = apvts.getRawParameterValue("filterResonance")->load();
+    bass.filterDrive = apvts.getRawParameterValue("filterDrive")->load();
+    bass.keyTracking = apvts.getRawParameterValue("keyTracking")->load();
+    bass.pitchEnvAmount = apvts.getRawParameterValue("pitchEnvAmount")->load();
+    bass.pitchEnvTime = apvts.getRawParameterValue("pitchEnvTime")->load();
+    bass.pitchEnvCurve = apvts.getRawParameterValue("pitchEnvCurve")->load();
+    bass.outputLevel = apvts.getRawParameterValue("outputLevel")->load();
+    bass.midiNote = juce::jlimit(
+        0, 127, static_cast<int>(
+                    apvts.getRawParameterValue("rootNote")->load()));
+
+    return vstengine::match::KickBassMatch::analyze(
+        kick, bass, currentSampleRate);
+}
+
+void VstEngineAudioProcessor::applyMatchAdjustments(
+    const vstengine::match::MatchAdjustments& adjustments)
+{
+    // Message-thread path (editor button). Every write clamps to the target
+    // parameter's own numeric range, so nothing can leave the APVTS bounds.
+    auto applyClamped = [this](const char* id, float plainValue) {
+        if (auto* parameter = apvts.getParameter(id)) {
+            const float normalized = juce::jlimit(
+                0.0f, 1.0f, parameter->convertTo0to1(plainValue));
+            parameter->setValue(normalized);
+        }
+    };
+
+    if (auto* parameter = apvts.getParameter("kickTail")) {
+        const float currentPlain = parameter->convertFrom0to1(
+            parameter->getValue());
+        applyClamped("kickTail",
+                     currentPlain
+                         * static_cast<float>(adjustments.kickTailMultiplier));
+    }
+
+    applyClamped("kickPhase", static_cast<float>(adjustments.kickPhaseDeg));
+
+    if (auto* parameter = apvts.getParameter("outputLevel")) {
+        const float currentPlain = parameter->convertFrom0to1(
+            parameter->getValue());
+        const double level = std::pow(10.0, adjustments.bassLevelDb / 20.0);
+        applyClamped("outputLevel",
+                     currentPlain * static_cast<float>(level));
+    }
+
+    applyClamped("matchBassTimingOffsetMs",
+                 static_cast<float>(adjustments.bassTimingOffsetMs));
 }
 
 bool VstEngineAudioProcessor::containsNoteEvents(
@@ -475,6 +575,15 @@ VstEngineAudioProcessor::createParameterLayout()
         juce::ParameterID { "kickMidiChannel", 1 },
         "Kick MIDI Channel",
         1, 16, 2));
+
+    // --- Kick/bass match (issue #11 PHASE 6) ---
+    // User-visible bounded result of the match analysis: the bass's note
+    // events are delayed by this many ms relative to the kick attack
+    // (0 = no delay). Bound 16 ms by construction.
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { "matchBassTimingOffsetMs", 1 },
+        "Bass Timing Offset",
+        0, 16, 0));
 
     return { params.begin(), params.end() };
 }

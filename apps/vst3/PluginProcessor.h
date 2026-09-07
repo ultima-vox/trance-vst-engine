@@ -3,6 +3,7 @@
 #include <memory>
 #include "bass/PsyBassVoice.h"
 #include "kick/KickSynth.h"
+#include "match/KickBassMatch.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/SourceSelector.h"
 #include "preset/PresetManager.h"
@@ -49,6 +50,12 @@ public:
     vstengine::PresetManager* presetManager() noexcept { return presetManager_.get(); }
     int getCurrentPlayHeadStep() const noexcept { return scheduler.playHeadStep(); }
     juce::File createGeneratedMidiFile();
+
+    // Kick/bass matching (issue #11 PHASE 6): message-thread only. The
+    // analyzer renders real DSP (kick + bass) off the audio callback.
+    [[nodiscard]] vstengine::match::MatchReport analyzeKickBassMatch();
+    void applyMatchAdjustments(
+        const vstengine::match::MatchAdjustments& adjustments);
 
 private:
     // APVTS bridge passed to the preset module (vstengine::PresetStateStore).

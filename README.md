@@ -18,6 +18,10 @@ Early vertical slice (0.1.x). The current target is a reliable VST3 instrument i
   phase reset and output level - no samples, fully generated
 - Kick factory presets: Psytrance, Dark Psy, Progressive Psy, Hi-Tech,
   Classic Trance
+- Synthetic kick/bass matching (issue #11 Phase 6): bounded analysis of
+  kick tail/dominant region vs bass onset/dominant region, spectral overlap
+  and phase interaction, with APPLY respecting hard bounds (tail x0.60..x1.00,
+  phase snap 0|180 deg, bass level +/-6 dB, bass timing 0..16 ms)
 - Automatable Drive and Release parameters
 - Plug-in state save/restore
 - Minimal native JUCE editor
@@ -141,6 +145,24 @@ play the kick and never reach the bass engine; the piano roll transposes
 relative to C4 while Tune stays the anchor. CC 120/123 fast-fade the tail so
 no note can hang. Factory kick presets: Psytrance, Dark Psy, Progressive Psy,
 Hi-Tech, Classic Trance.
+
+## Kick/bass matching (issue #11 Phase 6)
+
+The **MATCH** panel analyzes the real synthesized kick and a real synthesized
+bass note (same DSP the plugin uses) and measures kick tail duration,
+kick/low-end dominant region, bass onset, spectral overlap, phase interaction
+and peak relationship. **APPLY** writes bounded adjustments through APVTS:
+
+- kick tail is trimmed by at most 40% (`x0.60..x1.00`)
+- kick phase snaps to 0 or 180 degrees
+- bass output level is corrected within +/-6 dB
+- bass note events are delayed by at most 16 ms (sample-accurate inside the
+  audio block; no cross-block rescheduling)
+
+No random parameter movement, no preset switching and no fake "matched"
+state: the exit gate is automated - the unit test material must show a
+measurable reduction in low-end spectral overlap without muting either
+source.
 
 ## Host synchronization
 
