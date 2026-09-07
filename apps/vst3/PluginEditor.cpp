@@ -36,7 +36,7 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
       sequencer(std::make_unique<vstengine::ui::StepSequencer>(
           p.sequence(), seqCallbacks.get()))
 {
-    setSize(920, 1300);
+    setSize(920, 1488);
     addAndMakeVisible(*sequencer);
     startTimer(33);
 
@@ -151,6 +151,12 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     configureSmallSlider(kickMidiChannelSlider);
     addAndMakeVisible(kickMidiChannelSlider);
 
+    // --- Kick/bass match panel (issue #11 PHASE 6) ---
+    configureSmallSlider(matchTimingSlider);
+    addAndMakeVisible(matchAnalyzeButton);
+    addAndMakeVisible(matchApplyButton);
+    addAndMakeVisible(matchTimingSlider);
+
     // --- Labels ---
     configureLabel(presetLabel, "PRESET");
     configureLabel(midiModeLabel, "MIDI SOURCE");
@@ -191,6 +197,11 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
     configureLabel(kickPhaseLabel, "PHASE");
     configureLabel(kickOutputLevelLabel, "K OUTPUT");
     configureLabel(kickMidiChannelLabel, "KICK MIDI CH");
+    configureLabel(matchGroupLabel, "KICK/BASS MATCH");
+    configureLabel(matchTimingLabel, "BASS TIMING OFFSET");
+    configureLabel(matchHintLabel,
+                   "APPLY clamps: tail x0.60..x1.00, phase 0|180 deg, "
+                   "bass level +/-6 dB, timing 0..16 ms");
 
     for (auto* label : { &presetLabel, &midiModeLabel, &midiChannelLabel,
                          &rootNoteLabel, &rngSeedLabel,
@@ -209,7 +220,10 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
                          &kickClickToneLabel, &kickDriveLabel,
                          &kickClipLabel, &kickTransientLabel,
                          &kickSubLabel, &kickTuneLabel, &kickPhaseLabel,
-                         &kickOutputLevelLabel, &kickMidiChannelLabel })
+                         &kickOutputLevelLabel, &kickMidiChannelLabel,
+                         &matchGroupLabel, &matchTimingLabel,
+                         &matchReportLabel1, &matchReportLabel2,
+                         &matchHintLabel })
         addAndMakeVisible(label);
 
     // --- Attachments ---
@@ -263,6 +277,48 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
         attachSlider(kickOutputLevelSlider, "kickOutputLevel");
     kickMidiChannelAttachment =
         attachSlider(kickMidiChannelSlider, "kickMidiChannel");
+
+    matchTimingAttachment =
+        attachSlider(matchTimingSlider, "matchBassTimingOffsetMs");
+
+    // --- Kick/bass match actions (issue #11 PHASE 6) ---
+    // ANALYZE renders a real kick + bass note off the audio thread (message
+    // thread only) and fills the report labels with the measured values.
+    // APPLY writes the bounded recommendation through APVTS so it survives
+    // preset/project restore exactly like any other parameter.
+    matchAnalyzeButton.onClick = [this] {
+        lastMatchReport = processor.analyzeKickBassMatch();
+        hasMatchReport = true;
+
+        matchReportLabel1.setText(
+            juce::String("KICK TAIL ")
+                + juce::String(lastMatchReport.kickTailSeconds, 3) + "s"
+                + "   KICK DOM "
+                + juce::String(lastMatchReport.kickDominantHz, 1) + "Hz"
+                + "   BASS ONSET "
+                + juce::String(lastMatchReport.bassOnsetSeconds, 3) + "s"
+                + "   BASS DOM "
+                + juce::String(lastMatchReport.bassDominantHz, 1) + "Hz",
+            juce::dontSendNotification);
+
+        matchReportLabel2.setText(
+            juce::String("OVERLAP ")
+                + juce::String(lastMatchReport.spectralOverlap, 3)
+                + "   CORR "
+                + juce::String(lastMatchReport.phaseCorrelation, 2)
+                + "   RATIO "
+                + juce::String(lastMatchReport.peakRatio, 3)
+                + (lastMatchReport.overlapImproves
+                       ? "   -> BOUNDED MATCH REDUCES OVERLAP"
+                       : "   -> OVERLAP ALREADY LOW"),
+            juce::dontSendNotification);
+    };
+
+    matchApplyButton.onClick = [this] {
+        if (!hasMatchReport)
+            return;
+        processor.applyMatchAdjustments(lastMatchReport.adjustments);
+    };
 }
 
 void VstEngineAudioProcessorEditor::SequencerCallbacks::onCopy()
@@ -358,11 +414,11 @@ void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(13.0f);
     g.drawText(
         "AUTO: piano roll wins when MIDI notes are present; otherwise generator.",
-        40, 1256, getWidth() - 80, 22,
+        40, 1446, getWidth() - 80, 22,
         juce::Justification::centredLeft);
     g.drawText(
         "Generator MIDI is exposed to the host for recording/routing; drag exports a MIDI clip.",
-        40, 1276, getWidth() - 80, 22,
+        40, 1468, getWidth() - 80, 22,
         juce::Justification::centredLeft);
 }
 
@@ -498,8 +554,20 @@ void VstEngineAudioProcessorEditor::resized()
     kickMidiChannelSlider.setBounds(
         startX + 2 * (colW + colGap) + 8, kickRowY3, colW - 16, 28);
 
-    midiDragButton.setBounds(40, 1130, 240, 32);
-    pianoKeyboard.setBounds(40, 1170, w - 80, 78);
+    // Kick/bass match panel (issue #11 PHASE 6)
+    matchGroupLabel.setBounds(startX, 1126, colW * 3, 18);
+    matchAnalyzeButton.setBounds(startX, 1150, 132, 26);
+    matchApplyButton.setBounds(startX + 140, 1150, 88, 26);
+    matchTimingLabel.setBounds(
+        startX + 3 * (colW + colGap), 1152, colW + 40, 16);
+    matchTimingSlider.setBounds(
+        startX + 3 * (colW + colGap) + 4, 1174, colW - 8, 22);
+    matchReportLabel1.setBounds(40, 1216, w - 80, 20);
+    matchReportLabel2.setBounds(40, 1240, w - 80, 20);
+    matchHintLabel.setBounds(40, 1264, w - 80, 20);
+
+    midiDragButton.setBounds(40, 1302, 240, 32);
+    pianoKeyboard.setBounds(40, 1342, w - 80, 78);
 }
 
 juce::AudioProcessorEditor*
