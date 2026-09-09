@@ -19,7 +19,7 @@ void GeneratedNoteScheduler::reset(const double sampleRate) noexcept
     transportWasPlaying = false;
     continuityValid = false;
     lastBlockEndPpq = 0.0;
-    playHeadStep_ = -1;
+    playHeadStep_.store(-1, std::memory_order_relaxed);
     clearGlideRequests();
     juce::ignoreUnused(sampleRate);
 }
@@ -50,7 +50,7 @@ void GeneratedNoteScheduler::flush(juce::MidiBuffer& midi,
     samplesUntilNextRatchet = 0.0;
     subNoteDuration = 0.0;
     lastGeneratedNote = -1;
-    playHeadStep_ = -1;
+    playHeadStep_.store(-1, std::memory_order_relaxed);
     continuityValid = false;
     clearGlideRequests();
 }
@@ -128,7 +128,7 @@ void GeneratedNoteScheduler::processPpq(
     // musical position.
     const auto grid = vstengine::sync::resolveStepGrid(
         ppqAtBlockStart, seqSize, stepsPerQuarter);
-    playHeadStep_ = grid.stepIndex;
+    playHeadStep_.store(grid.stepIndex, std::memory_order_relaxed);
 
     // Schedule every step boundary that starts inside this block. Onsets are
     // derived from absolute musical coordinates, so starting the transport
@@ -281,7 +281,7 @@ void GeneratedNoteScheduler::processFallback(
         samplesUntilNextStep -= 1.0;
 
         if (samplesUntilNextStep <= 0.0) {
-            playHeadStep_ = currentStep;
+            playHeadStep_.store(currentStep, std::memory_order_relaxed);
             const auto& step = sequence[static_cast<int>(currentStep)];
 
             // Advance RNG once per step regardless of gate state, then evaluate

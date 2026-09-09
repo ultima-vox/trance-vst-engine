@@ -351,6 +351,21 @@ int main()
         require(!kick.isActive(), "voice hard-stop: inactive after cap");
     }
 
+    // Panic queued after trigger in same block must fade new one-shot.
+    {
+        auto p = cleanParams();
+        p.bodyDecay = 2.0f;
+        KickSynth kick;
+        kick.prepare(sr);
+        kick.setParameters(p);
+        juce::AudioBuffer<float> buffer(1, 2000);
+        buffer.clear();
+        kick.trigger(1.0f, 60, 0);
+        kick.release(100);
+        kick.render(buffer, 2000);
+        require(!kick.isActive(), "same-block panic stops queued trigger");
+    }
+
     // 16: Retrigger - a second note-on restarts the deterministic attack.
     {
         auto p = cleanParams();

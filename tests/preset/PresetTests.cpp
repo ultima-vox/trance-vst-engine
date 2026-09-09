@@ -49,7 +49,7 @@ public:
         // Global (non-sound) settings present in full state.
         for (const char* id :
              { "midiMode", "midiChannel", "rootNote", "rngSeed",
-               "kickMidiChannel" }) {
+               "kickMidiChannel", "matchBassTimingOffsetMs" }) {
             auto p = juce::ValueTree("PARAM");
             p.setProperty("id", juce::var(id), nullptr);
             p.setProperty("value", juce::var(0.0f), nullptr);
@@ -63,7 +63,7 @@ public:
                                       float plainValue) const override
     {
         juce::ignoreUnused(parameterId);
-        return plainValue / 10.0f;
+        return juce::jlimit(0.0f, 1.0f, plainValue / 10.0f);
     }
 
     juce::ValueTree state;
@@ -73,6 +73,25 @@ float readParam(const juce::ValueTree& state, const char* id)
 {
     return static_cast<float>(static_cast<double>(
         state.getChildWithProperty("id", juce::var(id)).getProperty("value")));
+}
+
+void setParam(juce::ValueTree& state, const char* id, const float value)
+{
+    state.getChildWithProperty("id", juce::var(id))
+        .setProperty("value", juce::var(value), nullptr);
+}
+
+void requireStatesEqual(const juce::ValueTree& expected,
+                        const juce::ValueTree& actual)
+{
+    require(expected.getNumChildren() == actual.getNumChildren(),
+            "parameter count preserved");
+    for (int i = 0; i < expected.getNumChildren(); ++i) {
+        const auto id = expected.getChild(i).getProperty("id").toString();
+        require(std::abs(readParam(expected, id.toRawUTF8())
+                         - readParam(actual, id.toRawUTF8())) < 1e-6f,
+                "parameter value preserved");
+    }
 }
 
 } // namespace
@@ -92,8 +111,16 @@ int main()
         vstengine::PresetManager manager(store, seq, dir);
 
         const auto names = manager.getFactoryPresetNames();
-        require(names.size() > 0, "factory preset list not empty");
-        require(manager.loadFactoryPreset(names[0]), "factory preset loads");
+        require(names.size() == 10, "all factory presets listed");
+        for (const auto& name : { "Tight Rolling", "Dark Rolling", "Short Punch",
+                                  "Deep Rolling", "Hi-Tech Tight", "Psytrance",
+                                  "Dark Psy", "Progressive Psy", "Hi-Tech",
+                                  "Classic Trance" })
+            require(names.contains(name), "expected factory preset listed");
+        require(manager.loadFactoryPreset("Tight Rolling"),
+                "bass factory preset loads");
+        require(std::abs(readParam(store.state, "drive") - 0.22f) < 1e-6f,
+                "bass factory applies expected drive");
         require(readParam(store.state, "midiMode") == 0.0f,
                 "sound preset leaves midiMode untouched");
         require(seq[0].noteOffset == 5,
@@ -102,27 +129,58 @@ int main()
                 "unknown factory preset rejected");
     }
 
-    // 2: Sound preset save/load round-trip (v1 XML schema).
+    // 2: Bass Sound preset changes Bass only and creates a real file.
     {
         FakeStore store;
         vstengine::sequence::Sequence seq(16);
         vstengine::PresetManager manager(store, seq, dir);
 
-        store.state.getChildWithProperty("id", juce::var("drive"))
-            .setProperty("value", juce::var(0.75f), nullptr);
-        manager.saveSoundPreset("Round Trip Sound");
+        setParam(store.state, "drive", 0.75f);
+        setParam(store.state, "kickPitchEnd", 0.35f);
+        setParam(store.state, "midiMode", 0.4f);
+        require(manager.saveSoundPreset(
+                    "Round Trip Bass", vstengine::PresetManager::SoundEngine::bass),
+                "bass sound preset saves");
+        require(dir.getChildFile("Round Trip Bass.xml").existsAsFile(),
+                "bass sound preset creates file");
 
-        store.state.getChildWithProperty("id", juce::var("drive"))
-            .setProperty("value", juce::var(0.1f), nullptr);
-        require(manager.loadSoundPreset("Round Trip Sound"),
+        setParam(store.state, "drive", 0.1f);
+        setParam(store.state, "kickPitchEnd", 0.8f);
+        setParam(store.state, "midiMode", 0.9f);
+        require(manager.loadSoundPreset("Round Trip Bass"),
                 "sound preset loads");
         require(std::abs(readParam(store.state, "drive") - 0.75f) < 1e-6f,
                 "sound preset round-trips drive value");
-        require(manager.getCurrentPresetName() == "Round Trip Sound",
+        require(readParam(store.state, "kickPitchEnd") == 0.8f,
+                "bass sound preset leaves Kick untouched");
+        require(readParam(store.state, "midiMode") == 0.9f,
+                "bass sound preset leaves globals untouched");
+        require(manager.getCurrentPresetName() == "Round Trip Bass",
                 "current preset name tracked");
     }
 
-    // 3: Full preset carries the canonical sequence (round-trip equality).
+    // 3: Kick Sound preset changes Kick only.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+        setParam(store.state, "kickPitchEnd", 0.35f);
+        setParam(store.state, "drive", 0.75f);
+        require(manager.saveSoundPreset(
+                    "Round Trip Kick", vstengine::PresetManager::SoundEngine::kick),
+                "kick sound preset saves");
+        setParam(store.state, "kickPitchEnd", 0.1f);
+        setParam(store.state, "drive", 0.2f);
+        require(manager.loadSoundPreset("Round Trip Kick"),
+                "kick sound preset loads");
+        require(std::abs(readParam(store.state, "kickPitchEnd") - 0.35f)
+                    < 1e-6f,
+                "kick sound value restored");
+        require(readParam(store.state, "drive") == 0.2f,
+                "kick sound preset leaves Bass untouched");
+    }
+
+    // 4: Full preset carries complete APVTS state + canonical sequence.
     {
         FakeStore store;
         vstengine::sequence::Sequence seq(16);
@@ -131,15 +189,26 @@ int main()
         seq[3].ratchetCount = 4;
         seq[3].slideDuration = 1.5f;
         seq.setSelectedRange(2, 9);
+        seq.setTimingMode(vstengine::sequence::TimingMode::triplet);
         vstengine::PresetManager manager(store, seq, dir);
 
-        manager.saveFullPreset("Round Trip Full");
+        for (int i = 0; i < store.state.getNumChildren(); ++i)
+            store.state.getChild(i).setProperty(
+                "value", juce::var(0.01f * static_cast<float>(i + 1)), nullptr);
+        const auto expectedState = store.state.createCopy();
+
+        require(manager.saveFullPreset("Round Trip Full"),
+                "full preset saves");
 
         // Clobber live sequence + state, then restore.
         seq.clear();
         seq.clearSelection();
+        seq.setTimingMode(vstengine::sequence::TimingMode::sixteenth);
+        for (int i = 0; i < store.state.getNumChildren(); ++i)
+            store.state.getChild(i).setProperty("value", juce::var(0.99f), nullptr);
         require(manager.loadFullPreset("Round Trip Full"),
                 "full preset loads");
+        requireStatesEqual(expectedState, store.state);
         require(seq.size() == 16, "full preset restores size");
         require(seq[3].gate && seq[3].noteOffset == 12
                     && seq[3].ratchetCount == 4,
@@ -149,14 +218,17 @@ int main()
         require(seq.hasSelection() && seq.getSelectedStart() == 2
                     && seq.getSelectedEnd() == 9,
                 "full preset restores selection");
+        require(seq.getTimingMode() == vstengine::sequence::TimingMode::triplet,
+                "full preset restores timing mode");
     }
 
-    // 4: Corrupt full preset fails safely (live state untouched).
+    // 5: Corrupt full preset fails safely (all live state untouched).
     {
         FakeStore store;
         vstengine::sequence::Sequence seq(16);
         vstengine::PresetManager manager(store, seq, dir);
-        manager.saveFullPreset("Corrupt Me");
+        setParam(store.state, "drive", 0.7f);
+        require(manager.saveFullPreset("Corrupt Me"), "corrupt fixture saves");
 
         const auto file = dir.getChildFile("Corrupt Me.xml");
         require(file.existsAsFile(), "preset file written");
@@ -171,9 +243,11 @@ int main()
         require(!manager.loadFullPreset("Corrupt Me"),
                 "corrupt sequence rejected");
         require(seq.size() == 16, "live sequence untouched on rejection");
+        require(readParam(store.state, "drive") == 0.7f,
+                "live parameter state untouched on rejection");
     }
 
-    // 5: Kick factory presets (issue #11 PHASE 5) set kick params only.
+    // 6: Kick factory presets set Kick params only.
     {
         FakeStore store;
         vstengine::sequence::Sequence seq(16);
@@ -190,8 +264,7 @@ int main()
 
         require(manager.loadFactoryPreset("Psytrance"),
                 "kick factory preset loads");
-        // convertTo0to1 divides by 10, so 18 st -> 1.8 normalized.
-        require(std::abs(readParam(store.state, "kickPitchStart") - 1.8f)
+        require(std::abs(readParam(store.state, "kickPitchStart") - 1.0f)
                     < 1e-5f,
                 "kick factory sets kickPitchStart");
         require(readParam(store.state, "drive") == 0.5f,
@@ -203,35 +276,9 @@ int main()
         // by the previous kick preset load must survive unchanged.
         require(manager.loadFactoryPreset("Tight Rolling"),
                 "bass factory preset still loads");
-        require(std::abs(readParam(store.state, "kickPitchStart") - 1.8f)
+        require(std::abs(readParam(store.state, "kickPitchStart") - 1.0f)
                     < 1e-5f,
                 "bass factory leaves kick params untouched");
-    }
-
-    // 6: Sound preset round-trip includes kick parameters (v1 extension).
-    {
-        FakeStore store;
-        vstengine::sequence::Sequence seq(16);
-        vstengine::PresetManager manager(store, seq, dir);
-
-        store.state.getChildWithProperty("id", juce::var("kickPitchEnd"))
-            .setProperty("value", juce::var(0.35f), nullptr);
-        store.state.getChildWithProperty("id", juce::var("drive"))
-            .setProperty("value", juce::var(0.75f), nullptr);
-        manager.saveSoundPreset("Kick Round Trip");
-
-        store.state.getChildWithProperty("id", juce::var("kickPitchEnd"))
-            .setProperty("value", juce::var(0.1f), nullptr);
-        store.state.getChildWithProperty("id", juce::var("drive"))
-            .setProperty("value", juce::var(0.2f), nullptr);
-
-        require(manager.loadSoundPreset("Kick Round Trip"),
-                "sound preset with kick params loads");
-        require(std::abs(readParam(store.state, "kickPitchEnd") - 0.35f)
-                    < 1e-6f,
-                "kick param round-trips through sound preset");
-        require(std::abs(readParam(store.state, "drive") - 0.75f) < 1e-6f,
-                "bass param round-trips through sound preset");
     }
 
     // 7: Sound preset XML stays loadable without kick entries (v1 backward
@@ -261,6 +308,147 @@ int main()
                 "legacy preset applies bass params");
         require(readParam(store.state, "kickPitchStart") == 0.5f,
                 "legacy preset keeps live kick values");
+    }
+
+    // 8: Typed catalog reports source, kind and sound engine from real data.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+        require(manager.saveSoundPreset(
+                    "Catalog Bass", vstengine::PresetManager::SoundEngine::bass),
+                "catalog bass saves");
+        require(manager.saveSoundPreset(
+                    "Catalog Kick", vstengine::PresetManager::SoundEngine::kick),
+                "catalog kick saves");
+        require(manager.saveFullPreset("Catalog Full"), "catalog full saves");
+
+        bool foundFactoryBass = false;
+        bool foundUserBass = false;
+        bool foundUserKick = false;
+        bool foundUserFull = false;
+        for (const auto& entry : manager.getPresets()) {
+            if (entry.name == "Tight Rolling")
+                foundFactoryBass = entry.isReadOnly()
+                    && entry.engine == vstengine::PresetManager::SoundEngine::bass;
+            if (entry.name == "Catalog Bass")
+                foundUserBass = !entry.isReadOnly()
+                    && entry.engine == vstengine::PresetManager::SoundEngine::bass;
+            if (entry.name == "Catalog Kick")
+                foundUserKick = !entry.isReadOnly()
+                    && entry.engine == vstengine::PresetManager::SoundEngine::kick;
+            if (entry.name == "Catalog Full")
+                foundUserFull = !entry.isReadOnly()
+                    && entry.kind == vstengine::PresetManager::PresetKind::full;
+        }
+        require(foundFactoryBass, "catalog identifies factory Bass");
+        require(foundUserBass, "catalog identifies user Bass");
+        require(foundUserKick, "catalog identifies user Kick");
+        require(foundUserFull, "catalog identifies user Full");
+    }
+
+    // 9: Rename updates disk and embedded name; Delete removes real file.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+        setParam(store.state, "drive", 0.73f);
+        require(manager.saveSoundPreset(
+                    "Before Rename", vstengine::PresetManager::SoundEngine::bass),
+                "rename fixture saves");
+        require(manager.renamePreset("Before Rename", "After Rename"),
+                "user preset renames");
+        require(!dir.getChildFile("Before Rename.xml").existsAsFile(),
+                "old preset path absent");
+        require(dir.getChildFile("After Rename.xml").existsAsFile(),
+                "new preset path exists");
+        require(!manager.getSoundPresetNames().contains("Before Rename"),
+                "old preset name absent from refresh");
+        require(manager.getSoundPresetNames().contains("After Rename"),
+                "new preset name appears after refresh");
+        setParam(store.state, "drive", 0.1f);
+        require(manager.loadSoundPreset("After Rename"),
+                "renamed preset loads");
+        require(std::abs(readParam(store.state, "drive") - 0.73f) < 1e-6f,
+                "renamed preset retains data");
+        require(manager.deletePreset("After Rename"), "user preset deletes");
+        require(!dir.getChildFile("After Rename.xml").existsAsFile(),
+                "deleted preset file absent");
+        require(!manager.getSoundPresetNames().contains("After Rename"),
+                "deleted preset absent after refresh");
+    }
+
+    // 10: Factory names are protected and invalid names report exact errors.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+        const auto rename = manager.renamePreset("Tight Rolling", "Changed");
+        require(rename.error == vstengine::PresetManager::Error::readOnly,
+                "factory rename rejected");
+        const auto remove = manager.deletePreset("Psytrance");
+        require(remove.error == vstengine::PresetManager::Error::readOnly,
+                "factory delete rejected");
+        const auto overwrite = manager.saveFullPreset("Tight Rolling");
+        require(overwrite.error == vstengine::PresetManager::Error::readOnly,
+                "factory overwrite rejected");
+        const auto invalid = manager.saveFullPreset("Bad/Name");
+        require(invalid.error == vstengine::PresetManager::Error::invalidName,
+                "invalid name rejected");
+    }
+
+    // 11: Malformed and future presets fail with useful errors, no state change.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+        setParam(store.state, "drive", 0.61f);
+        dir.getChildFile("Malformed.xml").replaceWithText("not xml");
+        const auto malformed = manager.loadSoundPreset("Malformed");
+        require(malformed.error == vstengine::PresetManager::Error::invalidPreset,
+                "malformed preset reports invalid preset");
+        require(readParam(store.state, "drive") == 0.61f,
+                "malformed preset leaves state untouched");
+
+        juce::XmlElement future("VstEnginePreset");
+        future.setAttribute("version", 99);
+        future.setAttribute("type", "sound");
+        future.createNewChildElement("name")->setText("Future");
+        dir.getChildFile("Future.xml").replaceWithText(future.toString());
+        const auto unsupported = manager.loadSoundPreset("Future");
+        require(unsupported.error
+                    == vstengine::PresetManager::Error::unsupportedVersion,
+                "future preset reports unsupported version");
+        require(readParam(store.state, "drive") == 0.61f,
+                "future preset leaves state untouched");
+
+        require(manager.saveFullPreset("Empty Parameters"),
+                "invalid parameter fixture saves");
+        const auto emptyFile = dir.getChildFile("Empty Parameters.xml");
+        auto emptyXml = juce::parseXML(emptyFile.loadFileAsString());
+        require(emptyXml != nullptr, "invalid parameter fixture parses");
+        auto* tree = emptyXml->getChildByName("parameters")
+                         ->getChildByName("PARAMETERS");
+        while (tree->getNumChildElements() > 0)
+            tree->removeChildElement(tree->getChildElement(0), true);
+        emptyFile.replaceWithText(emptyXml->toString());
+        const auto empty = manager.loadFullPreset("Empty Parameters");
+        require(empty.error == vstengine::PresetManager::Error::invalidPreset,
+                "empty parameter tree rejected");
+        require(readParam(store.state, "drive") == 0.61f,
+                "empty parameter tree leaves state untouched");
+
+        require(manager.saveFullPreset("Bad Numeric"),
+                "bad numeric fixture saves");
+        const auto badNumericFile = dir.getChildFile("Bad Numeric.xml");
+        auto badNumericXml = juce::parseXML(badNumericFile.loadFileAsString());
+        auto* badTree = badNumericXml->getChildByName("parameters")
+                            ->getChildByName("PARAMETERS");
+        badTree->getChildElement(0)->setAttribute("value", "1e");
+        badNumericFile.replaceWithText(badNumericXml->toString());
+        require(manager.loadFullPreset("Bad Numeric").error
+                    == vstengine::PresetManager::Error::invalidPreset,
+                "partially parsed numeric value rejected");
     }
 
     dir.deleteRecursively();

@@ -124,16 +124,28 @@ int main()
 
         class Store final : public vstengine::PresetStateStore {
         public:
+            Store()
+            {
+                state = juce::ValueTree("PARAMETERS");
+                auto parameter = juce::ValueTree("PARAM");
+                parameter.setProperty("id", "drive", nullptr);
+                parameter.setProperty("value", 0.42, nullptr);
+                state.appendChild(parameter, nullptr);
+            }
             [[nodiscard]] juce::ValueTree copyState() const override
             {
-                return juce::ValueTree("PARAMETERS");
+                return state.createCopy();
             }
-            void replaceState(juce::ValueTree) override {}
+            void replaceState(juce::ValueTree value) override
+            {
+                state = std::move(value);
+            }
             [[nodiscard]] float convertTo0to1(const char*,
                                               float plainValue) const override
             {
                 return plainValue;
             }
+            juce::ValueTree state;
         } store;
 
         vstengine::PresetManager manager(store, seq, dir);

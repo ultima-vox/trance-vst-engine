@@ -1,582 +1,76 @@
 #include "PluginEditor.h"
 #include <ctime>
 
-namespace {
+using Page = vstengine::ui::MainNavigation::Page;
 
-void configureRotarySlider(juce::Slider& slider)
+VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor (VstEngineAudioProcessor& p)
+    : AudioProcessorEditor (&p), processor (p),
+      header (p.parameters(), { [this] { selectAdjacentPreset (-1); },
+                                [this] { selectAdjacentPreset (1); },
+                                [this] { showPage (Page::presets); },
+                                [&p] { p.requestPanic(); } }),
+      bass (p.parameters()), kick (p.parameters()), sequenceCallbacks (p),
+      sequence (p.sequence(), &sequenceCallbacks),
+      match (p.parameters(), { [&p] { return p.analyzeKickBassMatch(); },
+                               [&p] (const auto& adjustments) { p.applyMatchAdjustments (adjustments); } }),
+      presets (*p.presetManager(), [this] {
+          sequence.refreshFromModel();
+          processor.publishSequenceForAudio();
+      }),
+      settings (p.parameters(), p.keyboardState(),
+                { [&p] { return p.createGeneratedMidiFile(); }, [&p] { p.requestPanic(); } }),
+      pages { &bass, &kick, &sequence, &match, &presets, &settings }
 {
-    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 18);
+    addAndMakeVisible (header); addAndMakeVisible (navigation);
+    for (auto* page : pages) addChildComponent (page);
+    navigation.onPageChanged = [this] (Page page) { showPage (page); };
+    setResizable (true, true); setResizeLimits (1040, 680, 1600, 1000); setSize (1180, 760);
+    showPage (Page::bass); startTimerHz (30);
 }
 
-void configureSmallSlider(juce::Slider& slider)
-{
-    slider.setSliderStyle(juce::Slider::IncDecButtons);
-    slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 64, 22);
-}
-
-void configureLabel(juce::Label& label, const juce::String& text)
-{
-    label.setText(text, juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::FontOptions(11.0f));
-}
-
-} // anonymous namespace
-
-VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(
-    VstEngineAudioProcessor& p)
-    : AudioProcessorEditor(&p),
-      processor(p),
-      midiDragButton(p),
-      pianoKeyboard(
-          p.keyboardState(),
-          juce::MidiKeyboardComponent::horizontalKeyboard),
-      seqCallbacks(std::make_unique<SequencerCallbacks>(p)),
-      sequencer(std::make_unique<vstengine::ui::StepSequencer>(
-          p.sequence(), seqCallbacks.get()))
-{
-    setSize(920, 1488);
-    addAndMakeVisible(*sequencer);
-    startTimer(33);
-
-    titleLabel.setText(
-        "VST ENGINE  /  DARK PSY CORE",
-        juce::dontSendNotification);
-    titleLabel.setFont(juce::FontOptions(22.0f, juce::Font::bold));
-    titleLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(titleLabel);
-
-    addAndMakeVisible(midiDragButton);
-    addAndMakeVisible(pianoKeyboard);
-
-    // --- MIDI mode / generator settings ---
-    midiModeBox.addItem("AUTO", 1);
-    midiModeBox.addItem("PIANO ROLL", 2);
-    midiModeBox.addItem("GENERATOR", 3);
-    midiModeBox.addItem("BOTH", 4);
-    addAndMakeVisible(midiModeBox);
-    configureSmallSlider(midiChannelSlider);
-    configureSmallSlider(rootNoteSlider);
-    configureSmallSlider(rngSeedSlider);
-    addAndMakeVisible(midiChannelSlider);
-    addAndMakeVisible(rootNoteSlider);
-    addAndMakeVisible(rngSeedSlider);
-
-    // --- Preset system ---
-    addAndMakeVisible(presetBox);
-    presetNameEditor.setTextToShowWhenEmpty("preset name", juce::Colours::grey);
-    addAndMakeVisible(presetNameEditor);
-    for (auto* button : { &presetSaveButton, &presetSaveFullButton,
-                          &presetLoadButton, &presetRenameButton,
-                          &presetDeleteButton, &presetRefreshButton })
-        addAndMakeVisible(button);
-
-    presetSaveButton.onClick = [this] {
-        auto* manager = processor.presetManager();
-        if (manager == nullptr) return;
-        const auto name = presetNameEditor.getText().trim();
-        if (name.isEmpty()) return;
-        manager->saveSoundPreset(name);
-        refreshPresetList();
-    };
-    presetSaveFullButton.onClick = [this] {
-        auto* manager = processor.presetManager();
-        if (manager == nullptr) return;
-        const auto name = presetNameEditor.getText().trim();
-        if (name.isEmpty()) return;
-        manager->saveFullPreset(name);
-        refreshPresetList();
-    };
-    presetLoadButton.onClick = [this] {
-        auto* manager = processor.presetManager();
-        if (manager == nullptr) return;
-        const auto itemId = presetBox.getSelectedId();
-        if (itemId <= 0) return;
-        const auto name = presetBox.getText().trim();
-        if (name.isEmpty()) return;
-        switch (presetKindForId(itemId)) {
-            case PresetKind::factory:   manager->loadFactoryPreset(name); break;
-            case PresetKind::userSound: manager->loadSoundPreset(name);   break;
-            case PresetKind::userFull:  manager->loadFullPreset(name);    break;
-        }
-    };
-    presetRenameButton.onClick = [this] {
-        auto* manager = processor.presetManager();
-        if (manager == nullptr) return;
-        const auto newName = presetNameEditor.getText().trim();
-        const auto currentName = manager->getCurrentPresetName();
-        if (newName.isEmpty() || currentName.isEmpty() || newName == currentName)
-            return;
-        if (manager->renamePreset(currentName, newName))
-            refreshPresetList();
-    };
-    presetDeleteButton.onClick = [this] {
-        auto* manager = processor.presetManager();
-        if (manager == nullptr) return;
-        const auto itemId = presetBox.getSelectedId();
-        if (itemId < 2000) return; // only user presets are deletable
-        const auto name = presetBox.getText().trim();
-        if (name.isEmpty()) return;
-        if (manager->deletePreset(name))
-            refreshPresetList();
-    };
-    presetRefreshButton.onClick = [this] { refreshPresetList(); };
-    refreshPresetList();
-
-    // --- Sound-shaping rotaries ---
-    for (auto* slider : { &filterCutoffSlider, &filterResonanceSlider,
-                          &filterDriveSlider, &keyTrackingSlider,
-                          &ampAttackSlider, &ampDecaySlider,
-                          &ampSustainSlider, &ampReleaseSlider,
-                          &pitchEnvAmountSlider, &pitchEnvTimeSlider,
-                          &pitchEnvCurveSlider, &driveSlider,
-                          &outputLevelSlider }) {
-        configureRotarySlider(*slider);
-        addAndMakeVisible(slider);
-    }
-
-    // --- Kick engine rotaries (issue #11 PHASE 5) ---
-    for (auto* slider : { &kickPitchStartSlider, &kickPitchEndSlider,
-                          &kickPitchDecaySlider, &kickPitchCurveSlider,
-                          &kickBodyDecaySlider, &kickTailSlider,
-                          &kickClickSlider, &kickClickToneSlider,
-                          &kickDriveSlider, &kickClipSlider,
-                          &kickTransientSlider, &kickSubSlider,
-                          &kickTuneSlider, &kickPhaseSlider,
-                          &kickOutputLevelSlider }) {
-        configureRotarySlider(*slider);
-        addAndMakeVisible(slider);
-    }
-    configureSmallSlider(kickMidiChannelSlider);
-    addAndMakeVisible(kickMidiChannelSlider);
-
-    // --- Kick/bass match panel (issue #11 PHASE 6) ---
-    configureSmallSlider(matchTimingSlider);
-    addAndMakeVisible(matchAnalyzeButton);
-    addAndMakeVisible(matchApplyButton);
-    addAndMakeVisible(matchTimingSlider);
-
-    // --- Labels ---
-    configureLabel(presetLabel, "PRESET");
-    configureLabel(midiModeLabel, "MIDI SOURCE");
-    configureLabel(midiChannelLabel, "GEN MIDI CH");
-    configureLabel(rootNoteLabel, "ROOT NOTE");
-    configureLabel(rngSeedLabel, "GEN SEED");
-    configureLabel(filterGroupLabel, "FILTER");
-    configureLabel(ampGroupLabel, "AMP ENVELOPE");
-    configureLabel(pitchGroupLabel, "PITCH ENVELOPE");
-    configureLabel(outputGroupLabel, "OUTPUT");
-    configureLabel(filterCutoffLabel, "CUTOFF");
-    configureLabel(filterResonanceLabel, "RESONANCE");
-    configureLabel(filterDriveLabel, "FILT DRIVE");
-    configureLabel(keyTrackingLabel, "KEY TRACK");
-    configureLabel(ampAttackLabel, "ATTACK");
-    configureLabel(ampDecayLabel, "DECAY");
-    configureLabel(ampSustainLabel, "SUSTAIN");
-    configureLabel(ampReleaseLabel, "RELEASE");
-    configureLabel(pitchEnvAmountLabel, "P AMOUNT");
-    configureLabel(pitchEnvTimeLabel, "P TIME");
-    configureLabel(pitchEnvCurveLabel, "P CURVE");
-    configureLabel(driveLabel, "DRIVE");
-    configureLabel(outputLevelLabel, "OUTPUT");
-    configureLabel(kickGroupLabel, "KICK");
-    configureLabel(kickPitchStartLabel, "P START");
-    configureLabel(kickPitchEndLabel, "P END");
-    configureLabel(kickPitchDecayLabel, "P DECAY");
-    configureLabel(kickPitchCurveLabel, "P CURVE");
-    configureLabel(kickBodyDecayLabel, "BODY");
-    configureLabel(kickTailLabel, "TAIL");
-    configureLabel(kickClickLabel, "CLICK");
-    configureLabel(kickClickToneLabel, "C TONE");
-    configureLabel(kickDriveLabel, "K DRIVE");
-    configureLabel(kickClipLabel, "CLIP");
-    configureLabel(kickTransientLabel, "TRANS");
-    configureLabel(kickSubLabel, "SUB");
-    configureLabel(kickTuneLabel, "TUNE");
-    configureLabel(kickPhaseLabel, "PHASE");
-    configureLabel(kickOutputLevelLabel, "K OUTPUT");
-    configureLabel(kickMidiChannelLabel, "KICK MIDI CH");
-    configureLabel(matchGroupLabel, "KICK/BASS MATCH");
-    configureLabel(matchTimingLabel, "BASS TIMING OFFSET");
-    configureLabel(matchHintLabel,
-                   "APPLY clamps: tail x0.60..x1.00, phase 0|180 deg, "
-                   "bass level +/-6 dB, timing 0..16 ms");
-
-    for (auto* label : { &presetLabel, &midiModeLabel, &midiChannelLabel,
-                         &rootNoteLabel, &rngSeedLabel,
-                         &filterGroupLabel, &ampGroupLabel, &pitchGroupLabel,
-                         &outputGroupLabel, &filterCutoffLabel,
-                         &filterResonanceLabel, &filterDriveLabel,
-                         &keyTrackingLabel, &ampAttackLabel, &ampDecayLabel,
-                         &ampSustainLabel, &ampReleaseLabel,
-                         &pitchEnvAmountLabel, &pitchEnvTimeLabel,
-                         &pitchEnvCurveLabel, &driveLabel,
-                         &outputLevelLabel,
-                         &kickGroupLabel, &kickPitchStartLabel,
-                         &kickPitchEndLabel, &kickPitchDecayLabel,
-                         &kickPitchCurveLabel, &kickBodyDecayLabel,
-                         &kickTailLabel, &kickClickLabel,
-                         &kickClickToneLabel, &kickDriveLabel,
-                         &kickClipLabel, &kickTransientLabel,
-                         &kickSubLabel, &kickTuneLabel, &kickPhaseLabel,
-                         &kickOutputLevelLabel, &kickMidiChannelLabel,
-                         &matchGroupLabel, &matchTimingLabel,
-                         &matchReportLabel1, &matchReportLabel2,
-                         &matchHintLabel })
-        addAndMakeVisible(label);
-
-    // --- Attachments ---
-    auto attachSlider = [this](juce::Slider& slider, const char* paramID) {
-        return std::make_unique<SliderAttachment>(
-            processor.parameters(), paramID, slider);
-    };
-
-    midiModeAttachment = std::make_unique<ComboBoxAttachment>(
-        processor.parameters(), "midiMode", midiModeBox);
-    midiChannelAttachment = attachSlider(midiChannelSlider, "midiChannel");
-    rootNoteAttachment = attachSlider(rootNoteSlider, "rootNote");
-    rngSeedAttachment = attachSlider(rngSeedSlider, "rngSeed");
-    filterCutoffAttachment = attachSlider(filterCutoffSlider, "filterCutoff");
-    filterResonanceAttachment =
-        attachSlider(filterResonanceSlider, "filterResonance");
-    filterDriveAttachment = attachSlider(filterDriveSlider, "filterDrive");
-    keyTrackingAttachment = attachSlider(keyTrackingSlider, "keyTracking");
-    ampAttackAttachment = attachSlider(ampAttackSlider, "ampAttack");
-    ampDecayAttachment = attachSlider(ampDecaySlider, "ampDecay");
-    ampSustainAttachment = attachSlider(ampSustainSlider, "ampSustain");
-    ampReleaseAttachment = attachSlider(ampReleaseSlider, "release");
-    pitchEnvAmountAttachment =
-        attachSlider(pitchEnvAmountSlider, "pitchEnvAmount");
-    pitchEnvTimeAttachment = attachSlider(pitchEnvTimeSlider, "pitchEnvTime");
-    pitchEnvCurveAttachment =
-        attachSlider(pitchEnvCurveSlider, "pitchEnvCurve");
-    driveAttachment = attachSlider(driveSlider, "drive");
-    outputLevelAttachment = attachSlider(outputLevelSlider, "outputLevel");
-    kickPitchStartAttachment =
-        attachSlider(kickPitchStartSlider, "kickPitchStart");
-    kickPitchEndAttachment = attachSlider(kickPitchEndSlider, "kickPitchEnd");
-    kickPitchDecayAttachment =
-        attachSlider(kickPitchDecaySlider, "kickPitchDecay");
-    kickPitchCurveAttachment =
-        attachSlider(kickPitchCurveSlider, "kickPitchCurve");
-    kickBodyDecayAttachment =
-        attachSlider(kickBodyDecaySlider, "kickBodyDecay");
-    kickTailAttachment = attachSlider(kickTailSlider, "kickTail");
-    kickClickAttachment = attachSlider(kickClickSlider, "kickClick");
-    kickClickToneAttachment =
-        attachSlider(kickClickToneSlider, "kickClickTone");
-    kickDriveAttachment = attachSlider(kickDriveSlider, "kickDrive");
-    kickClipAttachment = attachSlider(kickClipSlider, "kickClip");
-    kickTransientAttachment =
-        attachSlider(kickTransientSlider, "kickTransient");
-    kickSubAttachment = attachSlider(kickSubSlider, "kickSub");
-    kickTuneAttachment = attachSlider(kickTuneSlider, "kickTune");
-    kickPhaseAttachment = attachSlider(kickPhaseSlider, "kickPhase");
-    kickOutputLevelAttachment =
-        attachSlider(kickOutputLevelSlider, "kickOutputLevel");
-    kickMidiChannelAttachment =
-        attachSlider(kickMidiChannelSlider, "kickMidiChannel");
-
-    matchTimingAttachment =
-        attachSlider(matchTimingSlider, "matchBassTimingOffsetMs");
-
-    // --- Kick/bass match actions (issue #11 PHASE 6) ---
-    // ANALYZE renders a real kick + bass note off the audio thread (message
-    // thread only) and fills the report labels with the measured values.
-    // APPLY writes the bounded recommendation through APVTS so it survives
-    // preset/project restore exactly like any other parameter.
-    matchAnalyzeButton.onClick = [this] {
-        lastMatchReport = processor.analyzeKickBassMatch();
-        hasMatchReport = true;
-
-        matchReportLabel1.setText(
-            juce::String("KICK TAIL ")
-                + juce::String(lastMatchReport.kickTailSeconds, 3) + "s"
-                + "   KICK DOM "
-                + juce::String(lastMatchReport.kickDominantHz, 1) + "Hz"
-                + "   BASS ONSET "
-                + juce::String(lastMatchReport.bassOnsetSeconds, 3) + "s"
-                + "   BASS DOM "
-                + juce::String(lastMatchReport.bassDominantHz, 1) + "Hz",
-            juce::dontSendNotification);
-
-        matchReportLabel2.setText(
-            juce::String("OVERLAP ")
-                + juce::String(lastMatchReport.spectralOverlap, 3)
-                + "   CORR "
-                + juce::String(lastMatchReport.phaseCorrelation, 2)
-                + "   RATIO "
-                + juce::String(lastMatchReport.peakRatio, 3)
-                + (lastMatchReport.overlapImproves
-                       ? "   -> BOUNDED MATCH REDUCES OVERLAP"
-                       : "   -> OVERLAP ALREADY LOW"),
-            juce::dontSendNotification);
-    };
-
-    matchApplyButton.onClick = [this] {
-        if (!hasMatchReport)
-            return;
-        processor.applyMatchAdjustments(lastMatchReport.adjustments);
-    };
-}
-
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onCopy()
-{
-    clipboard = processor.sequence().copy();
-    hasClipboard = true;
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onPaste()
-{
-    if (hasClipboard)
-        processor.sequence().paste(clipboard);
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateLeft() {
-    processor.sequence().rotateLeft();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateRight() {
-    processor.sequence().rotateRight();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onReverse() {
-    processor.sequence().reverse();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftLeft() {
-    processor.sequence().shiftLeft();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftRight() {
-    processor.sequence().shiftRight();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeUp() {
-    processor.sequence().transpose(1);
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeDown() {
-    processor.sequence().transpose(-1);
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveUp() {
-    processor.sequence().octaveUp();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveDown() {
-    processor.sequence().octaveDown();
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onMutate() {
-    processor.sequence().mutateSelected(static_cast<int>(std::time(nullptr)));
-}
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onClear() {
-    processor.sequence().clear();
-}
-
-VstEngineAudioProcessorEditor::PresetKind
-VstEngineAudioProcessorEditor::presetKindForId (int itemId) const noexcept
-{
-    if (itemId >= 3000) return PresetKind::userFull;
-    if (itemId >= 2000) return PresetKind::userSound;
-    return PresetKind::factory;
-}
-
-void VstEngineAudioProcessorEditor::refreshPresetList()
-{
-    presetBox.clear(juce::dontSendNotification);
-    auto* manager = processor.presetManager();
-    if (manager == nullptr) return;
-
-    int itemId = 1000;
-    for (const auto& name : manager->getFactoryPresetNames())
-        presetBox.addItem(name, itemId++);
-
-    presetBox.addSeparator();
-
-    itemId = 2000;
-    for (const auto& name : manager->getSoundPresetNames())
-        presetBox.addItem(name, itemId++);
-
-    presetBox.addSeparator();
-
-    itemId = 3000;
-    for (const auto& name : manager->getFullPresetNames())
-        presetBox.addItem(name, itemId++);
-}
-
-void VstEngineAudioProcessorEditor::paint(juce::Graphics& g)
-{
-    g.fillAll(juce::Colour::fromRGB(11, 15, 26));
-
-    const auto bounds = getLocalBounds().toFloat().reduced(22.0f);
-    g.setColour(juce::Colour::fromRGB(45, 53, 70));
-    g.drawRoundedRectangle(bounds, 10.0f, 1.0f);
-
-    g.setColour(juce::Colour::fromRGB(185, 164, 105));
-    g.drawLine(24.0f, 262.0f,
-               static_cast<float>(getWidth() - 24), 262.0f, 1.0f);
-    g.drawLine(24.0f, 700.0f,
-               static_cast<float>(getWidth() - 24), 700.0f, 1.0f);
-
-    g.setColour(juce::Colours::white.withAlpha(0.55f));
-    g.setFont(13.0f);
-    g.drawText(
-        "AUTO: piano roll wins when MIDI notes are present; otherwise generator.",
-        40, 1446, getWidth() - 80, 22,
-        juce::Justification::centredLeft);
-    g.drawText(
-        "Generator MIDI is exposed to the host for recording/routing; drag exports a MIDI clip.",
-        40, 1468, getWidth() - 80, 22,
-        juce::Justification::centredLeft);
-}
-
+VstEngineAudioProcessorEditor::~VstEngineAudioProcessorEditor() { stopTimer(); }
+void VstEngineAudioProcessorEditor::paint (juce::Graphics& g) { g.fillAll (vstengine::ui::colours::background); }
 void VstEngineAudioProcessorEditor::resized()
 {
-    const auto w = getWidth();
-
-    titleLabel.setBounds(34, 26, w - 68, 30);
-    sequencer->setBounds(40, 66, w - 80, 260);
-
-    // MIDI source row
-    midiModeLabel.setBounds(55, 336, 190, 20);
-    midiModeBox.setBounds(55, 360, 190, 28);
-    midiChannelLabel.setBounds(280, 336, 130, 20);
-    midiChannelSlider.setBounds(295, 360, 100, 28);
-    rootNoteLabel.setBounds(470, 336, 130, 20);
-    rootNoteSlider.setBounds(485, 360, 100, 28);
-    rngSeedLabel.setBounds(660, 336, 150, 20);
-    rngSeedSlider.setBounds(675, 360, 150, 28);
-
-    // Preset row
-    presetLabel.setBounds(40, 398, 52, 22);
-    presetBox.setBounds(96, 398, 170, 24);
-    presetNameEditor.setBounds(272, 398, 130, 24);
-    presetSaveButton.setBounds(408, 398, 52, 24);
-    presetSaveFullButton.setBounds(466, 398, 70, 24);
-    presetLoadButton.setBounds(542, 398, 52, 24);
-    presetRenameButton.setBounds(600, 398, 52, 24);
-    presetDeleteButton.setBounds(658, 398, 52, 24);
-    presetRefreshButton.setBounds(716, 398, 60, 24);
-
-    // Parameter grid: 7 columns, 2 rows of rotaries.
-    constexpr int numCols = 7;
-    constexpr int colW = 116;
-    constexpr int rowY1 = 468;
-    constexpr int rowY2 = 594;
-    const int startX = 40;
-    const int colGap = (w - 80 - numCols * colW) / (numCols - 1);
-
-    struct Slot { juce::Slider* slider; juce::Label* label; };
-    const Slot row1[] = {
-        { &filterCutoffSlider, &filterCutoffLabel },
-        { &filterResonanceSlider, &filterResonanceLabel },
-        { &filterDriveSlider, &filterDriveLabel },
-        { &keyTrackingSlider, &keyTrackingLabel },
-        { &ampAttackSlider, &ampAttackLabel },
-        { &ampDecaySlider, &ampDecayLabel },
-        { &ampSustainSlider, &ampSustainLabel },
-    };
-    const Slot row2[] = {
-        { &ampReleaseSlider, &ampReleaseLabel },
-        { &pitchEnvAmountSlider, &pitchEnvAmountLabel },
-        { &pitchEnvTimeSlider, &pitchEnvTimeLabel },
-        { &pitchEnvCurveSlider, &pitchEnvCurveLabel },
-        { &driveSlider, &driveLabel },
-        { &outputLevelSlider, &outputLevelLabel },
-        { nullptr, nullptr },
-    };
-
-    for (int i = 0; i < numCols; ++i) {
-        const int x = startX + i * (colW + colGap);
-        if (row1[i].slider != nullptr) {
-            row1[i].label->setBounds(x, rowY1 - 18, colW, 16);
-            row1[i].slider->setBounds(x, rowY1, colW, 96);
-        }
-        if (row2[i].slider != nullptr) {
-            row2[i].label->setBounds(x, rowY2 - 18, colW, 16);
-            row2[i].slider->setBounds(x, rowY2, colW, 96);
-        }
-    }
-
-    // Group headers
-    filterGroupLabel.setBounds(startX, 430, colW * 2 + colGap, 18);
-    ampGroupLabel.setBounds(startX + 4 * (colW + colGap), 430,
-                            colW * 3 + colGap, 18);
-    pitchGroupLabel.setBounds(startX + 1 * (colW + colGap), 558,
-                              colW * 3 + colGap, 18);
-    outputGroupLabel.setBounds(startX + 4 * (colW + colGap), 558,
-                               colW * 3 + colGap, 18);
-
-    // Kick parameter grid: same 7-column grid, 3 rows (15 rotaries + CH).
-    constexpr int kickRowY1 = 744;
-    constexpr int kickRowY2 = 870;
-    constexpr int kickRowY3 = 996;
-
-    const Slot kickRow1[] = {
-        { &kickPitchStartSlider, &kickPitchStartLabel },
-        { &kickPitchEndSlider, &kickPitchEndLabel },
-        { &kickPitchDecaySlider, &kickPitchDecayLabel },
-        { &kickPitchCurveSlider, &kickPitchCurveLabel },
-        { &kickBodyDecaySlider, &kickBodyDecayLabel },
-        { &kickTailSlider, &kickTailLabel },
-        { &kickClickSlider, &kickClickLabel },
-    };
-    const Slot kickRow2[] = {
-        { &kickClickToneSlider, &kickClickToneLabel },
-        { &kickDriveSlider, &kickDriveLabel },
-        { &kickClipSlider, &kickClipLabel },
-        { &kickTransientSlider, &kickTransientLabel },
-        { &kickSubSlider, &kickSubLabel },
-        { &kickTuneSlider, &kickTuneLabel },
-        { &kickPhaseSlider, &kickPhaseLabel },
-    };
-    const Slot kickRow3[] = {
-        { &kickOutputLevelSlider, &kickOutputLevelLabel },
-        { nullptr, nullptr },
-        { nullptr, nullptr },
-        { nullptr, nullptr },
-        { nullptr, nullptr },
-        { nullptr, nullptr },
-        { nullptr, nullptr },
-    };
-
-    for (int i = 0; i < numCols; ++i) {
-        const int x = startX + i * (colW + colGap);
-        if (kickRow1[i].slider != nullptr) {
-            kickRow1[i].label->setBounds(x, kickRowY1 - 18, colW, 16);
-            kickRow1[i].slider->setBounds(x, kickRowY1, colW, 96);
-        }
-        if (kickRow2[i].slider != nullptr) {
-            kickRow2[i].label->setBounds(x, kickRowY2 - 18, colW, 16);
-            kickRow2[i].slider->setBounds(x, kickRowY2, colW, 96);
-        }
-        if (kickRow3[i].slider != nullptr) {
-            kickRow3[i].label->setBounds(x, kickRowY3 - 18, colW, 16);
-            kickRow3[i].slider->setBounds(x, kickRowY3, colW, 96);
-        }
-    }
-
-    kickGroupLabel.setBounds(startX, 706, colW * 4 + colGap * 3, 18);
-    kickMidiChannelLabel.setBounds(
-        startX + 2 * (colW + colGap), kickRowY3 - 18, colW, 16);
-    kickMidiChannelSlider.setBounds(
-        startX + 2 * (colW + colGap) + 8, kickRowY3, colW - 16, 28);
-
-    // Kick/bass match panel (issue #11 PHASE 6)
-    matchGroupLabel.setBounds(startX, 1126, colW * 3, 18);
-    matchAnalyzeButton.setBounds(startX, 1150, 132, 26);
-    matchApplyButton.setBounds(startX + 140, 1150, 88, 26);
-    matchTimingLabel.setBounds(
-        startX + 3 * (colW + colGap), 1152, colW + 40, 16);
-    matchTimingSlider.setBounds(
-        startX + 3 * (colW + colGap) + 4, 1174, colW - 8, 22);
-    matchReportLabel1.setBounds(40, 1216, w - 80, 20);
-    matchReportLabel2.setBounds(40, 1240, w - 80, 20);
-    matchHintLabel.setBounds(40, 1264, w - 80, 20);
-
-    midiDragButton.setBounds(40, 1302, 240, 32);
-    pianoKeyboard.setBounds(40, 1342, w - 80, 78);
+    auto area = getLocalBounds(); header.setBounds (area.removeFromTop (58));
+    navigation.setBounds (area.removeFromTop (44).reduced (10, 4));
+    for (auto* page : pages) page->setBounds (area.reduced (10, 6));
 }
-
-juce::AudioProcessorEditor*
-VstEngineAudioProcessor::createEditor()
+void VstEngineAudioProcessorEditor::showPage (Page page)
 {
-    return new VstEngineAudioProcessorEditor(*this);
+    const auto index = static_cast<size_t> (page);
+    if (index >= pages.size()) return;
+    for (size_t i=0;i<pages.size();++i) pages[i]->setVisible (i==index);
+    if (navigation.getCurrentPage()!=page) navigation.setCurrentPage(page);
+}
+void VstEngineAudioProcessorEditor::showPageForTesting (Page page) { showPage (page); }
+Page VstEngineAudioProcessorEditor::currentPageForTesting() const noexcept { return navigation.getCurrentPage(); }
+void VstEngineAudioProcessorEditor::timerCallback()
+{
+    processor.publishSequenceForAudio();
+    const int step=processor.getCurrentPlayHeadStep(); sequence.setPlayHeadPosition(step);
+    match.refreshCurrentValues();
+    header.setTransportActive(step>=0); if(auto*m=processor.presetManager())header.setPresetName(m->getCurrentPresetName());
+}
+void VstEngineAudioProcessorEditor::selectAdjacentPreset (int delta)
+{
+    auto* manager=processor.presetManager();if(!manager)return;const auto entries=manager->getPresets();if(entries.isEmpty())return;
+    int current=0;const auto name=manager->getCurrentPresetName();for(int i=0;i<entries.size();++i)if(entries.getReference(i).name==name){current=i;break;}
+    const int next=juce::jlimit(0,entries.size()-1,current+delta);if(manager->loadPreset(entries.getReference(next))){sequence.refreshFromModel();processor.publishSequenceForAudio();}presets.refresh();
 }
 
-VstEngineAudioProcessorEditor::~VstEngineAudioProcessorEditor()
-{
-    stopTimer();
-}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onCopy(){processor.sequence().copyTo(clipboard);hasClipboard=true;}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onPaste(){if(hasClipboard)processor.sequence().paste(clipboard);}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateLeft(){processor.sequence().rotateLeft();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateRight(){processor.sequence().rotateRight();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onReverse(){processor.sequence().reverse();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftLeft(){processor.sequence().shiftLeft();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftRight(){processor.sequence().shiftRight();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeUp(){processor.sequence().transpose(1);}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeDown(){processor.sequence().transpose(-1);}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveUp(){processor.sequence().octaveUp();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveDown(){processor.sequence().octaveDown();}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onMutate(){processor.sequence().mutateSelected((int)std::time(nullptr));}
+void VstEngineAudioProcessorEditor::SequencerCallbacks::onClear(){processor.sequence().clearSelected();}
+
+juce::AudioProcessorEditor* VstEngineAudioProcessor::createEditor(){return new VstEngineAudioProcessorEditor(*this);}

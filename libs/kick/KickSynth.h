@@ -52,7 +52,7 @@ public:
     void setParameters(const KickParams& p) noexcept;
 
     // Schedule a voice attack at sampleOffset within the block about to be
-    // rendered. velocity <= 0 is ignored (the shell maps those to release).
+    // rendered. velocity <= 0 is ignored as ordinary note-off semantics.
     void trigger(float velocity, int noteNumber, int sampleOffset) noexcept;
 
     // Fast-fade the sounding voice starting at sampleOffset (panic path).

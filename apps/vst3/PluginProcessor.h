@@ -5,9 +5,11 @@
 #include "kick/KickSynth.h"
 #include "match/KickBassMatch.h"
 #include "midi/GeneratedNoteScheduler.h"
+#include "midi/PartMidiRouter.h"
 #include "midi/SourceSelector.h"
 #include "preset/PresetManager.h"
 #include "sequence/Sequence.h"
+#include "sequence/RealtimeSequenceBridge.h"
 
 class VstEngineAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -20,7 +22,7 @@ public:
     ~VstEngineAudioProcessor() override = default;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -49,6 +51,11 @@ public:
     vstengine::sequence::Sequence& sequence() noexcept { return sequenceData; }
     vstengine::PresetManager* presetManager() noexcept { return presetManager_.get(); }
     int getCurrentPlayHeadStep() const noexcept { return scheduler.playHeadStep(); }
+    void requestPanic() noexcept { panicRequested.store(true); }
+    void publishSequenceForAudio() noexcept
+    {
+        sequenceBridge.publish(sequenceData);
+    }
     juce::File createGeneratedMidiFile();
 
     // Kick/bass matching (issue #11 PHASE 6): message-thread only. The
@@ -100,11 +107,16 @@ private:
     juce::MidiKeyboardState midiKeyboardState;
     juce::AudioProcessorValueTreeState apvts;
     vstengine::sequence::Sequence sequenceData;
+    vstengine::sequence::RealtimeSequenceBridge sequenceBridge;
+    vstengine::sequence::Sequence audioSequenceData;
     ApvtsPresetStore presetStore;
     std::unique_ptr<vstengine::PresetManager> presetManager_;
     // Generated-playback state machine (audio thread, see libs/midi).
     vstengine::midi::GeneratedNoteScheduler scheduler;
+    vstengine::midi::PartMidiRouter partMidiRouter;
     double currentSampleRate { 44100.0 };
+    bool wasTransportPlaying { false };
+    std::atomic<bool> panicRequested { false };
 
     // Preallocated scratch buffer for keyboard MIDI. processBlock() reuses it
     // every block (clear, processNextMidiBuffer, merge) so the realtime

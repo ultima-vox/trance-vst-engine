@@ -28,7 +28,8 @@ target_include_directories(vst_core INTERFACE ${VST_LIBS_DIR})
 
 # sequence: canonical Sequence/Step/timing model + serialization.
 add_library(vst_sequence STATIC
-  libs/sequence/Sequence.cpp libs/sequence/Sequence.h)
+  libs/sequence/Sequence.cpp libs/sequence/Sequence.h
+  libs/sequence/RealtimeSequenceBridge.h)
 target_include_directories(vst_sequence PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_sequence PUBLIC juce::juce_audio_basics)
 
@@ -40,6 +41,7 @@ target_include_directories(vst_transport INTERFACE ${VST_LIBS_DIR})
 add_library(vst_midi STATIC
   libs/midi/MidiExport.cpp libs/midi/MidiExport.h
   libs/midi/GeneratedNoteScheduler.cpp libs/midi/GeneratedNoteScheduler.h
+  libs/midi/PartMidiRouter.cpp libs/midi/PartMidiRouter.h
   libs/midi/SourceSelector.h)
 target_include_directories(vst_midi PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_midi
@@ -79,11 +81,21 @@ add_library(vst_generator STATIC
   libs/generator/PatternGenerator.cpp libs/generator/PatternGenerator.h)
 target_include_directories(vst_generator PUBLIC ${VST_LIBS_DIR})
 
-# ui: reusable JUCE components (step sequencer).
+# ui: reusable JUCE components and tab pages.
 add_library(vst_ui STATIC
-  libs/ui/StepSequencer.cpp libs/ui/StepSequencer.h)
+  libs/ui/common/UiComponents.cpp libs/ui/common/UiComponents.h
+  libs/ui/MainNavigation.cpp libs/ui/MainNavigation.h
+  libs/ui/GlobalHeader.cpp libs/ui/GlobalHeader.h
+  libs/ui/BassPanel.cpp libs/ui/BassPanel.h
+  libs/ui/KickPanel.cpp libs/ui/KickPanel.h
+  libs/ui/StepSequencer.cpp libs/ui/StepSequencer.h
+  libs/ui/MatchPanel.cpp libs/ui/MatchPanel.h
+  libs/ui/PresetBrowser.cpp libs/ui/PresetBrowser.h
+  libs/ui/SettingsPanel.cpp libs/ui/SettingsPanel.h)
 target_include_directories(vst_ui PUBLIC ${VST_LIBS_DIR})
-target_link_libraries(vst_ui PUBLIC juce::juce_gui_basics vst_sequence)
+target_link_libraries(vst_ui PUBLIC
+  juce::juce_gui_basics juce::juce_audio_utils juce::juce_audio_processors
+  vst_sequence vst_match vst_preset)
 
 # ---------------------------------------------------------------------------
 # VST3 shell: composition + host integration only.
@@ -152,6 +164,10 @@ target_link_libraries(generated_note_scheduler_tests PRIVATE vst_midi)
 add_test(NAME generated_note_scheduler_tests
          COMMAND generated_note_scheduler_tests)
 
+add_executable(part_midi_router_tests tests/midi/PartMidiRouterTests.cpp)
+target_link_libraries(part_midi_router_tests PRIVATE vst_midi vst_kick)
+add_test(NAME part_midi_router_tests COMMAND part_midi_router_tests)
+
 add_executable(psy_bass_tests tests/bass/PsyBassTests.cpp)
 target_link_libraries(psy_bass_tests PRIVATE vst_bass)
 add_test(NAME psy_bass_tests COMMAND psy_bass_tests)
@@ -176,3 +192,12 @@ add_executable(state_round_trip_tests
   tests/integration/StateRoundTripTests.cpp)
 target_link_libraries(state_round_trip_tests PRIVATE vst_preset vst_sequence)
 add_test(NAME state_round_trip_tests COMMAND state_round_trip_tests)
+
+add_executable(editor_smoke_tests tests/ui/EditorSmokeTests.cpp)
+target_include_directories(editor_smoke_tests PRIVATE
+  apps/vst3
+  ${VST_LIBS_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}/VstEngine_artefacts/JuceLibraryCode
+  ${juce_SOURCE_DIR}/modules)
+target_link_libraries(editor_smoke_tests PRIVATE VstEngine)
+add_test(NAME editor_smoke_tests COMMAND editor_smoke_tests)

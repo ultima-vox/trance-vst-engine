@@ -143,7 +143,9 @@ Routing: the kick listens on its own MIDI channel (**Kick MIDI Channel**,
 default 2 per the fixed Part 2 / CH 2 mapping). Note events on that channel
 play the kick and never reach the bass engine; the piano roll transposes
 relative to C4 while Tune stays the anchor. CC 120/123 fast-fade the tail so
-no note can hang. Factory kick presets: Psytrance, Dark Psy, Progressive Psy,
+no note can hang. As a one-shot, the kick ignores ordinary note-off; only
+CC 120/123 received on the configured Kick channel, UI Panic, transport stop,
+or plugin reset use the safety release path. Factory kick presets: Psytrance, Dark Psy, Progressive Psy,
 Hi-Tech, Classic Trance.
 
 ## Kick/bass matching (issue #11 Phase 6)
@@ -156,13 +158,22 @@ and peak relationship. **APPLY** writes bounded adjustments through APVTS:
 - kick tail is trimmed by at most 40% (`x0.60..x1.00`)
 - kick phase snaps to 0 or 180 degrees
 - bass output level is corrected within +/-6 dB
-- bass note events are delayed by at most 16 ms (sample-accurate inside the
-  audio block; no cross-block rescheduling)
+- Bass Part 1 / MIDI CH 1 note events are delayed by at most 16 ms using a
+  fixed-capacity, sample-accurate cross-block queue; other channels are unchanged
 
 No random parameter movement, no preset switching and no fake "matched"
 state: the exit gate is automated - the unit test material must show a
 measurable reduction in low-end spectral overlap without muting either
 source.
+
+## Editor and presets
+
+Editor uses compact BASS, KICK, SEQ, MATCH, PRESETS and SETTINGS tabs at
+1180x760, resizable from 1040x680 to 1600x1000. PRESETS reads one typed catalog
+from `PresetManager`: factory Bass/Kick presets are read-only; user Bass/Kick
+Sound presets and Full presets support save, load, rename, delete and refresh.
+Files live under JUCE user application data in `UltimaVox/VST-Engine/Presets/User`.
+Preset schema remains v1 and legacy v1 Sound presets remain loadable.
 
 ## Host synchronization
 

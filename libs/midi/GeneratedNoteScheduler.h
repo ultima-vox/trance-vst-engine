@@ -2,6 +2,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "sequence/Sequence.h"
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 namespace vstengine::midi {
@@ -72,7 +73,10 @@ public:
 
     // Canonical step containing the block-start musical position (PPQ path)
     // or the last scheduled step (fallback); -1 when nothing is playing.
-    [[nodiscard]] int playHeadStep() const noexcept { return playHeadStep_; }
+    [[nodiscard]] int playHeadStep() const noexcept
+    {
+        return playHeadStep_.load(std::memory_order_relaxed);
+    }
 
     // Glide request queue (drained by the shell once per block).
     [[nodiscard]] int numGlideRequests() const noexcept
@@ -110,7 +114,7 @@ private:
 
     // --- Generated-playback state (audio thread only, all preallocated) ---
     int currentStep {};
-    int playHeadStep_ { -1 };
+    std::atomic<int> playHeadStep_ { -1 };
     int heldNote { -1 };
     int heldChannel { 1 };
     double samplesUntilNextStep {};

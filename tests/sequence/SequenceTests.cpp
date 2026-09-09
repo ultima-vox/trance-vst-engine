@@ -1,4 +1,5 @@
 #include "sequence/Sequence.h"
+#include "sequence/RealtimeSequenceBridge.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -23,6 +24,23 @@ static int testsPassed = 0;
 int main()
 {
     using namespace vstengine::sequence;
+
+    // Lock-free publication preserves one complete audio snapshot.
+    {
+        Sequence source(32), audio;
+        source.setTimingMode(TimingMode::triplet);
+        source[7].gate = true;
+        source[7].noteOffset = 11;
+        source[7].velocity = 0.42f;
+        RealtimeSequenceBridge bridge;
+        bridge.publish(source);
+        require(bridge.read(audio), "realtime bridge publishes stable snapshot");
+        require(audio.size() == 32 && audio.getTimingMode() == TimingMode::triplet,
+                "realtime bridge preserves metadata");
+        require(audio[7].gate && audio[7].noteOffset == 11
+                    && std::abs(audio[7].velocity - 0.42f) < 1e-6f,
+                "realtime bridge preserves step");
+    }
 
     // 1: Default construction
     {
