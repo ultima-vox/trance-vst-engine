@@ -75,9 +75,8 @@ void KickSynth::trigger(const float velocity, const int noteNumber,
 
 void KickSynth::release(const int sampleOffset) noexcept
 {
-    if (!active)
-        return;
     // Earliest panic wins; a later release request never extends the fade.
+    // Keep request even before render(): trigger and panic may share a block.
     const int safeOffset = juce::jlimit(0, 1 << 20, sampleOffset);
     pendingReleaseOffset = pendingReleaseOffset < 0
                                ? safeOffset
@@ -114,11 +113,8 @@ void KickSynth::startVoice(const float velocity,
     subPhase = mainPhase;
     clickNoiseState = clickNoiseSeed;
     clickLowpass = 0.0f;
-    // A new attack supersedes any release/panic scheduled earlier in the
-    // same block; a fresh panic event will fast-fade the new voice.
     releaseRemaining = 0;
     releaseTotal = 0;
-    pendingReleaseOffset = -1;
 }
 
 void KickSynth::render(juce::AudioBuffer<float>& buffer,

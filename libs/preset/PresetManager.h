@@ -33,21 +33,63 @@ public:
     static constexpr int currentPresetVersion = 1;
 
     enum class PresetKind { sound, full };
+    enum class SoundEngine { none, bass, kick, legacyCombined };
+    enum class PresetSource { factory, user };
+
+    enum class Error {
+        none,
+        invalidName,
+        fileNotFound,
+        invalidPreset,
+        unsupportedVersion,
+        cannotWrite,
+        alreadyExists,
+        readOnly,
+        wrongKind
+    };
+
+    struct OperationResult {
+        Error error { Error::none };
+        juce::String message;
+
+        [[nodiscard]] bool wasOk() const noexcept { return error == Error::none; }
+        explicit operator bool() const noexcept { return wasOk(); }
+    };
+
+    struct PresetEntry {
+        juce::String name;
+        PresetSource source { PresetSource::user };
+        PresetKind kind { PresetKind::sound };
+        SoundEngine engine { SoundEngine::none };
+        juce::File file;
+
+        [[nodiscard]] bool isReadOnly() const noexcept
+        {
+            return source == PresetSource::factory;
+        }
+    };
 
     PresetManager(PresetStateStore& stateStore,
                   vstengine::sequence::Sequence& seq,
                   juce::File directory = getPresetDirectory());
 
-    void saveSoundPreset(const juce::String& name);
-    void saveFullPreset(const juce::String& name);
-    bool loadSoundPreset(const juce::String& name);
-    bool loadFullPreset(const juce::String& name);
+    OperationResult saveSoundPreset(const juce::String& name,
+                                    SoundEngine engine = SoundEngine::bass);
+    OperationResult saveFullPreset(const juce::String& name);
+    OperationResult loadSoundPreset(const juce::String& name);
+    OperationResult loadFullPreset(const juce::String& name);
+    OperationResult loadPreset(const PresetEntry& entry);
     juce::StringArray getSoundPresetNames() const;
     juce::StringArray getFullPresetNames() const;
-    bool renamePreset(const juce::String& oldName, const juce::String& newName);
-    bool deletePreset(const juce::String& name);
+    juce::Array<PresetEntry> getPresets() const;
+    OperationResult renamePreset(const juce::String& oldName,
+                                 const juce::String& newName);
+    OperationResult renamePreset(const PresetEntry& entry,
+                                 const juce::String& newName);
+    OperationResult deletePreset(const juce::String& name);
+    OperationResult deletePreset(const PresetEntry& entry);
     juce::StringArray getFactoryPresetNames() const;
-    bool loadFactoryPreset(const juce::String& name);
+    OperationResult loadFactoryPreset(const juce::String& name);
     juce::String getCurrentPresetName() const { return currentPresetName; }
 
 private:
@@ -57,9 +99,15 @@ private:
     juce::String currentPresetName;
 
     static juce::File getPresetDirectory();
-    void serializeToXml(juce::XmlElement& xml, PresetKind kind);
+    void serializeToXml(juce::XmlElement& xml, PresetKind kind,
+                        SoundEngine engine = SoundEngine::none);
     bool deserializeFromXml(const juce::XmlElement& xml, PresetKind expectedKind);
-    void writePresetFile(const juce::XmlElement& xml, const juce::String& name);
+    OperationResult writePresetFile(const juce::XmlElement& xml,
+                                    const juce::String& name);
+    OperationResult loadPresetFile(const juce::File& file,
+                                   PresetKind expectedKind);
+    OperationResult validateName(const juce::String& name) const;
+    bool isFactoryName(const juce::String& name) const;
     juce::String makeSafeFilename(const juce::String& name) const;
 };
 

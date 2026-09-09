@@ -69,6 +69,19 @@ int main()
     using vstengine::match::BassRenderParams;
     using vstengine::match::KickBassMatch;
 
+    // Known-tone regression: count full periods (rising crossings only).
+    for (const double hz : { 50.0, 65.406, 80.0, 100.0 }) {
+        std::vector<float> sine(static_cast<std::size_t>(sr * 2.0));
+        for (std::size_t i = 0; i < sine.size(); ++i)
+            sine[i] = static_cast<float>(std::sin(
+                juce::MathConstants<double>::twoPi * hz
+                * static_cast<double>(i) / sr));
+        const auto measured = KickBassMatch::dominantHz(
+            sine, 0, static_cast<int>(sine.size()), sr);
+        require(std::abs(measured - hz) / hz < 0.025,
+                "dominant: known sine within 2.5 percent");
+    }
+
     // 1: Determinism - identical inputs, identical report.
     {
         const auto k = overlappingKick();

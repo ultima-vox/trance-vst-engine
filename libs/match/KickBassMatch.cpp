@@ -1,6 +1,7 @@
 #include "match/KickBassMatch.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 
 namespace vstengine::match {
@@ -175,6 +176,8 @@ double KickBassMatch::dominantHz(const std::vector<float>& v, int from,
                                  int to, double sampleRate)
 {
     const int n = static_cast<int>(v.size());
+    if (n < 64 || sampleRate <= 0.0)
+        return 0.0;
     to = juce::jlimit(0, n, to);
     from = juce::jlimit(0, n - 1, from);
     if (to - from < 64)
@@ -187,12 +190,11 @@ double KickBassMatch::dominantHz(const std::vector<float>& v, int from,
             sampleRate);
 
     int crossings = 0;
-    long totalSamples = 0;
+    std::int64_t totalSamples = 0;
     int lastCross = -1;
     for (int i = 1; i < static_cast<int>(filtered.size()); ++i) {
         const bool up = filtered[i - 1] <= 0.0f && filtered[i] > 0.0f;
-        const bool down = filtered[i - 1] >= 0.0f && filtered[i] < 0.0f;
-        if (up || down) {
+        if (up) {
             if (lastCross >= 0)
                 totalSamples += i - lastCross;
             lastCross = i;
@@ -202,7 +204,7 @@ double KickBassMatch::dominantHz(const std::vector<float>& v, int from,
     if (crossings < 4 || totalSamples <= 0)
         return 0.0;
     const double period = static_cast<double>(totalSamples)
-                          / static_cast<double>(crossings);
+                          / static_cast<double>(crossings - 1);
     return sampleRate / period;
 }
 

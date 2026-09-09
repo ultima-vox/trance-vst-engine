@@ -90,6 +90,11 @@ public:
         const std::vector<float>& kick, const std::vector<float>& bass,
         double sampleRate);
 
+    // Deterministic known-tone estimator, public for strict regression tests.
+    [[nodiscard]] static double dominantHz(const std::vector<float>& v,
+                                           int from, int to,
+                                           double sampleRate);
+
 private:
     [[nodiscard]] static std::vector<float> renderKick(
         const vstengine::kick::KickParams& kick, double sampleRate);
@@ -98,9 +103,6 @@ private:
     [[nodiscard]] static double peak(const std::vector<float>& v);
     [[nodiscard]] static double tailSeconds(const std::vector<float>& v,
                                             double sampleRate);
-    [[nodiscard]] static double dominantHz(const std::vector<float>& v,
-                                           int from, int to,
-                                           double sampleRate);
     [[nodiscard]] static double onsetSeconds(const std::vector<float>& v,
                                              double sampleRate);
     [[nodiscard]] static double phaseCorrelation(

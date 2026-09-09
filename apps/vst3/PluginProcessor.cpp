@@ -25,6 +25,8 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
     // Seed initial sequence with darkPsy pattern (canonical seeded operation
     // owned by the sequence module; same generator stream as before).
     seedInitialSequence();
+    sequenceBridge.publish(sequenceData);
+    (void) sequenceBridge.read(audioSequenceData);
 
     presetManager_ = std::make_unique<vstengine::PresetManager>(
         presetStore, sequenceData);
@@ -51,10 +53,23 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate, const int)
     keyboardMidiScratch.ensureSize(4096);
 
     // Kick engine: reset voice state for the new rate and preallocate the
-    // scratch buffer used to strip kick-channel note events (same pattern
-    // and same budget as keyboardMidiScratch).
+    // scratch buffer used to strip kick-channel note events. Extra capacity
+    // covers all fixed pending-delay slots becoming due in one block without
+    // growing the buffer on the audio thread.
     kickSynth.prepare(sampleRate);
-    kickMidiScratch.ensureSize(4096);
+    partMidiRouter.reset();
+    wasTransportPlaying = false;
+    kickMidiScratch.ensureSize(
+        4096 + vstengine::midi::PartMidiRouter::maxPendingEvents * 16);
+}
+
+void VstEngineAudioProcessor::releaseResources()
+{
+    synth.allNotesOff(0, false);
+    kickSynth.reset();
+    partMidiRouter.reset();
+    scheduler.reset(currentSampleRate);
+    wasTransportPlaying = false;
 }
 
 bool VstEngineAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -69,6 +84,20 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+    (void) sequenceBridge.read(audioSequenceData);
+
+    // Explicit transport safety path, separate from ordinary note-off.
+    if (auto* hostPlayHead = getPlayHead()) {
+        if (const auto position = hostPlayHead->getPosition()) {
+            const bool playing = position->getIsPlaying();
+            if (wasTransportPlaying && !playing) {
+                synth.allNotesOff(0, false);
+                kickSynth.release(0);
+                partMidiRouter.reset();
+            }
+            wasTransportPlaying = playing;
+        }
+    }
 
     // Invalidate glide requests from the previous block before new ones are
     // scheduled (same thread, same block ordering — no synchronization needed).
@@ -122,7 +151,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             }
         }
 
-        scheduler.process(midi, sequenceData, frame, buffer.getNumSamples(),
+        scheduler.process(midi, audioSequenceData, frame, buffer.getNumSamples(),
                           currentSampleRate, channel, rootNote,
                           static_cast<std::uint32_t>(
                               apvts.getRawParameterValue("rngSeed")->load()));
@@ -146,14 +175,18 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         keyboardMidiScratch, 0, buffer.getNumSamples(), true);
     midi.addEvents(keyboardMidiScratch, 0, buffer.getNumSamples(), 0);
 
-    // Kick engine routing (issue #11 PHASE 5): note events on the kick MIDI
-    // channel (fixed multitimbral mapping: Part 2 / CH 2 = Kick) drive the
-    // synthesized kick and are consumed from the buffer so the bass engine
-    // never sees them. All other channels behave exactly as before. CC 120
-    // (All Sound Off) / CC 123 (All Notes Off) also fast-fade the kick tail.
-    // Bass timing offset (issue #11 PHASE 6): note events on non-kick
-    // channels may be delayed up to 16 ms (bounded match adjustment),
-    // sample-accurate within the block and realtime-safe (int math only).
+    if (panicRequested.exchange(false)) {
+        midi.clear();
+        synth.allNotesOff(0, false);
+        kickSynth.release(0);
+        partMidiRouter.reset();
+        scheduler.reset(currentSampleRate);
+    }
+
+    // Part-aware routing lives in vst_midi. Kick is one-shot: note-offs are
+    // consumed without release. Only kick-channel CC120/123 use panic release.
+    // Bass Part 1 / CH1 alone receives the match delay; its fixed queue carries
+    // events across blocks without allocation or locks.
     {
         const auto kickChannel = juce::jlimit(
             1, 16, static_cast<int>(
@@ -166,49 +199,19 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                     apvts.getRawParameterValue("matchBassTimingOffsetMs")
                         ->load()))
             * currentSampleRate / 1000.0));
-        const int blockSamples = buffer.getNumSamples();
+        partMidiRouter.process(midi, kickMidiScratch, buffer.getNumSamples(),
+                               1, kickChannel, bassTimingOffsetSamples);
+        midi.swapWith(kickMidiScratch);
 
-        bool kickConsumedEvents = false;
-        bool timingShifted = false;
-        kickMidiScratch.clear();
-
-        for (const auto metadata : midi) {
-            const auto message = metadata.getMessage();
-
-            if (message.getChannel() == kickChannel
-                && message.isNoteOnOrOff()) {
-                if (message.isNoteOn(false) && message.getVelocity() > 0)
-                    kickSynth.trigger(message.getVelocity() / 127.0f,
-                                      message.getNoteNumber(),
-                                      metadata.samplePosition);
-                else
-                    kickSynth.release(metadata.samplePosition);
-
-                kickConsumedEvents = true; // consumed, not copied
-                continue;
-            }
-
-            if (message.isController()
-                && (message.getControllerNumber() == 120
-                    || message.getControllerNumber() == 123))
-                kickSynth.release(metadata.samplePosition);
-
-            int samplePosition = metadata.samplePosition;
-            if (bassTimingOffsetSamples > 0 && message.isNoteOnOrOff()) {
-                const int shifted = samplePosition + bassTimingOffsetSamples;
-                if (shifted >= blockSamples) {
-                    // Cannot delay across a block boundary: keep as-is.
-                } else if (shifted != samplePosition) {
-                    samplePosition = shifted;
-                    timingShifted = true;
-                }
-            }
-
-            kickMidiScratch.addEvent(message, samplePosition);
+        for (int i = 0; i < partMidiRouter.numKickActions(); ++i) {
+            const auto& action = partMidiRouter.kickAction(i);
+            if (action.type
+                == vstengine::midi::PartMidiRouter::KickActionType::trigger)
+                kickSynth.trigger(action.velocity, action.note,
+                                  action.samplePosition);
+            else
+                kickSynth.release(action.samplePosition);
         }
-
-        if (kickConsumedEvents || timingShifted)
-            midi.swapWith(kickMidiScratch);
     }
 
     syncVoiceParameters();
@@ -654,6 +657,7 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
             }
         }
     }
+    sequenceBridge.publish(sequenceData);
 }
 
 void VstEngineAudioProcessor::seedInitialSequence()
