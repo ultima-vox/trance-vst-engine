@@ -8,6 +8,8 @@ on:
 jobs:
   windows-vst3:
     runs-on: self-hosted
+    env:
+      CMAKE_GENERATOR: Visual Studio 17 2022
 
     steps:
       - name: Checkout
@@ -17,7 +19,7 @@ jobs:
         run: cmake -S . -B build -A x64
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --clean-first --parallel
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
