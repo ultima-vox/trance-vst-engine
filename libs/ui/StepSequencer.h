@@ -25,6 +25,7 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void setPlayHeadPosition (int);
     void setLane (Lane);
+    void setSlideEnabled (bool enabled);
     void refreshFromModel();
     [[nodiscard]] Lane getLane() const noexcept { return lane; }
 private:
@@ -34,6 +35,7 @@ private:
     std::array<juce::TextButton, static_cast<size_t> (Lane::count)> laneButtons;
     std::array<juce::TextButton, 13> actionButtons;
     Lane lane { Lane::note };
+    bool slideEnabled { true };
     int playHeadStep { -1 }, selectedStep { -1 };
     static constexpr int gridTop = 118, gutterWidth = 76;
     [[nodiscard]] juce::Rectangle<int> gridBounds() const;

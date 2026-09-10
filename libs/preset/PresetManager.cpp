@@ -96,7 +96,11 @@ static bool migrateToCurrentVersion(const juce::XmlElement& source,
 {
     const auto version = source.getIntAttribute("version", 0);
     switch (version) {
-        case 1: // v1 == current schema: load as-is
+        case 1: // v1 has no engine metadata; loader infers from parameter IDs
+            result = source;
+            result.setAttribute("version", PresetManager::currentPresetVersion);
+            return true;
+        case PresetManager::currentPresetVersion:
             result = source;
             return true;
         default:
@@ -218,10 +222,20 @@ static const KickFactoryPreset kickFactoryPresets[] = {
 
 PresetManager::PresetManager(PresetStateStore& stateStore,
                              vstengine::sequence::Sequence& seq,
-                             juce::File directory)
-    : store(stateStore), sequence(seq), presetDirectory(directory) {
+                             juce::File directory,
+                             FullStateCallbacks fullState)
+    : store(stateStore), sequence(seq), presetDirectory(directory),
+      fullStateCallbacks(std::move(fullState)) {
     if (!presetDirectory.exists())
         presetDirectory.createDirectory();
+}
+
+PresetManager::PresetManager(PresetStateStore& stateStore,
+                             vstengine::sequence::Sequence& seq,
+                             FullStateCallbacks fullState)
+    : PresetManager(stateStore, seq, getPresetDirectory(),
+                    std::move(fullState))
+{
 }
 
 juce::File PresetManager::getPresetDirectory() {
@@ -240,10 +254,12 @@ juce::String PresetManager::makeSafeFilename(const juce::String& name) const {
 }
 
 void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind,
-                                   const SoundEngine engine)
+                                   const EngineType engine)
 {
     xml.setAttribute("version", currentPresetVersion);
     xml.setAttribute("type", kind == PresetKind::sound ? "sound" : "full");
+    if (kind == PresetKind::sound)
+        xml.setAttribute("engine", engine == EngineType::kick ? "kick" : "bass");
     xml.createNewChildElement("name")->addTextElement(currentPresetName);
 
     // Sound preset: engine sound parameters ONLY (psy-bass + kick, issue #11
@@ -275,11 +291,18 @@ void PresetManager::serializeToXml(juce::XmlElement& xml, const PresetKind kind,
     } else {
         paramsEl->addChildElement(state.createXml().release());
         xml.createNewChildElement("sequence")->addTextElement(encodeSequence(sequence));
+        if (fullStateCallbacks.capture) {
+            const auto extra = fullStateCallbacks.capture();
+            if (extra.isValid())
+                xml.createNewChildElement("parts")
+                    ->addChildElement(extra.createXml().release());
+        }
     }
 }
 
 bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
-                                       const PresetKind expectedKind)
+                                       const PresetKind expectedKind,
+                                       const EngineType expectedEngine)
 {
     if (!sourceXml.hasTagName("VstEnginePreset"))
         return false;
@@ -308,12 +331,21 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
 
     // Full presets carry the sequence; Sound presets never touch it.
     vstengine::sequence::Sequence restoredSequence;
+    juce::ValueTree restoredFullState;
     if (typeAttr == "full") {
         auto* seqEl = xml.getChildByName("sequence");
         if (seqEl == nullptr)
             return false;
         if (!decodeSequence(seqEl->getAllSubText(), restoredSequence))
             return false; // corrupt sequence: fail safely
+        if (auto* partsElement = xml.getChildByName("parts")) {
+            const auto* stateElement = partsElement->getFirstChildElement();
+            if (stateElement == nullptr || !fullStateCallbacks.restore)
+                return false;
+            restoredFullState = juce::ValueTree::fromXml(*stateElement);
+            if (!restoredFullState.isValid())
+                return false;
+        }
     }
 
     auto* paramsEl = xml.getChildByName("parameters");
@@ -327,33 +359,62 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
         return false;
 
     if (typeAttr == "sound") {
-        // Apply only the engine sound parameters onto the current state;
-        // sequence, MIDI and generator settings are left untouched. Kick
-        // parameters are applied per-ID as well; pre-kick v1 presets contain
-        // no kick entries and then simply keep the live kick values.
+        bool hasBass = false;
+        bool hasKick = false;
+        for (int i = 0; i < restored.getNumChildren(); ++i) {
+            const auto id = restored.getChild(i).getProperty("id").toString();
+            for (const auto* candidate : vstengine::core::soundParameterIds)
+                hasBass = hasBass || id == candidate;
+            for (const auto* candidate : vstengine::core::kickSoundParameterIds)
+                hasKick = hasKick || id == candidate;
+        }
+
+        EngineType storedEngine = EngineType::none;
+        const auto engineAttr = xml.getStringAttribute("engine");
+        if (engineAttr == "bass") storedEngine = EngineType::bass;
+        else if (engineAttr == "kick") storedEngine = EngineType::kick;
+        else if (engineAttr.isNotEmpty()) return false;
+        else storedEngine = hasBass && hasKick ? EngineType::legacyCombined
+                          : hasKick ? EngineType::kick
+                          : hasBass ? EngineType::bass : EngineType::none;
+
+        if (storedEngine == EngineType::none)
+            return false;
+        if (storedEngine == EngineType::bass && (!hasBass || hasKick))
+            return false;
+        if (storedEngine == EngineType::kick && (!hasKick || hasBass))
+            return false;
+        if (expectedEngine != EngineType::none && storedEngine != expectedEngine)
+            return false;
+
         auto newState = store.copyState();
         bool appliedParameter = false;
-        for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
-            const auto id = juce::var(vstengine::core::soundParameterIds[i]);
-            const auto src = restored.getChildWithProperty("id", id);
-            if (!src.isValid())
-                continue;
-            auto dst = newState.getChildWithProperty("id", id);
-            if (dst.isValid()) {
-                dst.copyPropertiesFrom(src, nullptr);
-                appliedParameter = true;
+        if (storedEngine == EngineType::bass
+            || storedEngine == EngineType::legacyCombined) {
+            for (int i = 0; i < vstengine::core::numSoundParameterIds; ++i) {
+                const auto id = juce::var(vstengine::core::soundParameterIds[i]);
+                const auto src = restored.getChildWithProperty("id", id);
+                if (src.isValid()) {
+                    auto dst = newState.getChildWithProperty("id", id);
+                    if (dst.isValid()) {
+                        dst.copyPropertiesFrom(src, nullptr);
+                        appliedParameter = true;
+                    }
+                }
             }
         }
-        for (int i = 0; i < vstengine::core::numKickSoundParameterIds; ++i) {
-            const auto id =
-                juce::var(vstengine::core::kickSoundParameterIds[i]);
-            const auto src = restored.getChildWithProperty("id", id);
-            if (!src.isValid())
-                continue;
-            auto dst = newState.getChildWithProperty("id", id);
-            if (dst.isValid()) {
-                dst.copyPropertiesFrom(src, nullptr);
-                appliedParameter = true;
+        if (storedEngine == EngineType::kick
+            || storedEngine == EngineType::legacyCombined) {
+            for (int i = 0; i < vstengine::core::numKickSoundParameterIds; ++i) {
+                const auto id = juce::var(vstengine::core::kickSoundParameterIds[i]);
+                const auto src = restored.getChildWithProperty("id", id);
+                if (src.isValid()) {
+                    auto dst = newState.getChildWithProperty("id", id);
+                    if (dst.isValid()) {
+                        dst.copyPropertiesFrom(src, nullptr);
+                        appliedParameter = true;
+                    }
+                }
             }
         }
         if (!appliedParameter)
@@ -375,6 +436,9 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
         }
         if (appliedParameters == 0)
             return false;
+        if (restoredFullState.isValid()
+            && !fullStateCallbacks.restore(restoredFullState))
+            return false;
         store.replaceState(std::move(newState));
         sequence = restoredSequence;
     }
@@ -384,7 +448,7 @@ bool PresetManager::deserializeFromXml(const juce::XmlElement& sourceXml,
 }
 
 PresetManager::OperationResult PresetManager::saveSoundPreset(
-    const juce::String& name, const SoundEngine engine)
+    const EngineType engine, const juce::String& name)
 {
     if (const auto validation = validateName(name); !validation)
         return validation;
@@ -426,6 +490,18 @@ PresetManager::OperationResult PresetManager::writePresetFile(
     }
     const auto safeName = makeSafeFilename(name);
     juce::File file(presetDirectory.getChildFile(safeName + ".xml"));
+    const auto categoryKey = [](const juce::XmlElement& element) {
+        if (element.getStringAttribute("type") == "full")
+            return juce::String("full");
+        const auto engine = element.getStringAttribute("engine");
+        return engine.isNotEmpty() ? engine : juce::String("sound");
+    };
+    if (file.existsAsFile()) {
+        const auto existing = juce::parseXML(file.loadFileAsString());
+        if (existing != nullptr && categoryKey(*existing) != categoryKey(xml))
+            file = presetDirectory.getChildFile(
+                safeName + " [" + categoryKey(xml) + "].xml");
+    }
     juce::TemporaryFile temporary(file);
     if (!temporary.getFile().replaceWithText(xml.toString()))
         return fail(Error::cannotWrite, "cannot write preset");
@@ -436,7 +512,8 @@ PresetManager::OperationResult PresetManager::writePresetFile(
 }
 
 PresetManager::OperationResult PresetManager::loadPresetFile(
-    const juce::File& file, const PresetKind expectedKind)
+    const juce::File& file, const PresetKind expectedKind,
+    const EngineType expectedEngine)
 {
     if (!file.existsAsFile())
         return fail(Error::fileNotFound, "preset file not found");
@@ -455,9 +532,25 @@ PresetManager::OperationResult PresetManager::loadPresetFile(
     const auto expectedType = expectedKind == PresetKind::sound ? "sound" : "full";
     if (type != expectedType)
         return fail(Error::wrongKind, "preset type does not match operation");
-    if (!deserializeFromXml(*xml, expectedKind))
+    if (!deserializeFromXml(*xml, expectedKind, expectedEngine)) {
+        if (expectedKind == PresetKind::sound
+            && expectedEngine != EngineType::none)
+            return fail(Error::wrongEngine, "preset engine does not match target");
         return fail(Error::invalidPreset, "invalid preset data");
+    }
     return ok();
+}
+
+PresetManager::OperationResult PresetManager::loadSoundPreset(
+    const EngineType engine, const juce::String& name)
+{
+    for (const auto& entry : getPresets())
+        if (entry.source == PresetSource::user && entry.name == name
+            && entry.kind == PresetKind::sound && entry.engine == engine)
+            return loadPresetFile(entry.file, PresetKind::sound, engine);
+    const auto safeName = makeSafeFilename(name);
+    juce::File file(presetDirectory.getChildFile(safeName + ".xml"));
+    return loadPresetFile(file, PresetKind::sound, engine);
 }
 
 PresetManager::OperationResult PresetManager::loadSoundPreset(
@@ -471,6 +564,10 @@ PresetManager::OperationResult PresetManager::loadSoundPreset(
 PresetManager::OperationResult PresetManager::loadFullPreset(
     const juce::String& name)
 {
+    for (const auto& entry : getPresets())
+        if (entry.source == PresetSource::user && entry.name == name
+            && entry.kind == PresetKind::full)
+            return loadPresetFile(entry.file, PresetKind::full);
     const auto safeName = makeSafeFilename(name);
     juce::File file(presetDirectory.getChildFile(safeName + ".xml"));
     return loadPresetFile(file, PresetKind::full);
@@ -482,6 +579,16 @@ juce::StringArray PresetManager::getSoundPresetNames() const
     for (const auto& entry : getPresets())
         if (entry.source == PresetSource::user
             && entry.kind == PresetKind::sound)
+            names.addIfNotAlreadyThere(entry.name);
+    return names;
+}
+
+juce::StringArray PresetManager::getSoundPresetNames(const EngineType engine) const
+{
+    juce::StringArray names;
+    for (const auto& entry : getPresets())
+        if (entry.source == PresetSource::user
+            && entry.kind == PresetKind::sound && entry.engine == engine)
             names.addIfNotAlreadyThere(entry.name);
     return names;
 }
@@ -513,7 +620,8 @@ juce::Array<PresetManager::PresetEntry> PresetManager::getPresets() const
              juce::File::findFiles, false, "*.xml")) {
         auto xml = juce::parseXML(file.loadFileAsString());
         if (xml == nullptr || !xml->hasTagName("VstEnginePreset")
-            || xml->getIntAttribute("version", 0) != currentPresetVersion)
+            || xml->getIntAttribute("version", 0) < 1
+            || xml->getIntAttribute("version", 0) > currentPresetVersion)
             continue;
         auto* nameEl = xml->getChildByName("name");
         if (nameEl == nullptr || nameEl->getAllSubText().trim().isEmpty())
@@ -541,8 +649,18 @@ juce::Array<PresetManager::PresetEntry> PresetManager::getPresets() const
                 }
         if (!hasBass && !hasKick)
             continue;
-        const auto engine = hasBass && hasKick ? SoundEngine::legacyCombined
-                          : hasKick ? SoundEngine::kick : SoundEngine::bass;
+        EngineType engine = EngineType::none;
+        const auto engineAttr = xml->getStringAttribute("engine");
+        if (engineAttr == "bass") engine = EngineType::bass;
+        else if (engineAttr == "kick") engine = EngineType::kick;
+        else if (engineAttr.isEmpty())
+            engine = hasBass && hasKick ? EngineType::legacyCombined
+                   : hasKick ? EngineType::kick : EngineType::bass;
+        else
+            continue;
+        if ((engine == EngineType::bass && (!hasBass || hasKick))
+            || (engine == EngineType::kick && (!hasKick || hasBass)))
+            continue;
         entries.add({ nameEl->getAllSubText(), PresetSource::user,
                       PresetKind::sound, engine, file });
     }
@@ -634,27 +752,40 @@ juce::StringArray PresetManager::getFactoryPresetNames() const {
     return names;
 }
 
+juce::StringArray PresetManager::getFactoryPresetNames(
+    const EngineType engine) const
+{
+    juce::StringArray names;
+    if (engine == EngineType::bass)
+        for (const auto& preset : factoryPresets) names.add(preset.name);
+    if (engine == EngineType::kick)
+        for (const auto& preset : kickFactoryPresets) names.add(preset.name);
+    return names;
+}
+
 PresetManager::OperationResult PresetManager::loadPreset(
     const PresetEntry& entry)
 {
     if (entry.source == PresetSource::factory)
-        return loadFactoryPreset(entry.name);
+        return loadFactoryPreset(entry.engine, entry.name);
     if (entry.file.getParentDirectory() != presetDirectory)
         return fail(Error::invalidPreset, "preset path is outside user directory");
-    return loadPresetFile(entry.file, entry.kind);
+    return loadPresetFile(entry.file, entry.kind, entry.engine);
 }
 
 PresetManager::OperationResult PresetManager::loadFactoryPreset(
-    const juce::String& name) {
-    // Build a v1 sound preset from plain parameter values. Values are
+    const EngineType engine, const juce::String& name) {
+    // Build a current-schema sound preset from plain parameter values. Values are
     // normalized with each parameter's own range so the resulting XML is
     // identical in format to a user-saved Sound preset.
-    auto buildPresetXml = [this](const char* presetName,
+    auto buildPresetXml = [this](const EngineType target,
+                                 const char* presetName,
                                  const FactorySoundParam* params,
                                  int numParams) {
         juce::XmlElement xml("VstEnginePreset");
         xml.setAttribute("version", currentPresetVersion);
         xml.setAttribute("type", "sound");
+        xml.setAttribute("engine", target == EngineType::kick ? "kick" : "bass");
         xml.createNewChildElement("name")->setText(presetName);
         auto* paramsEl = xml.createNewChildElement("parameters");
         auto* paramsTree = paramsEl->createNewChildElement("PARAMETERS");
@@ -669,26 +800,36 @@ PresetManager::OperationResult PresetManager::loadFactoryPreset(
         return xml;
     };
 
-    for (const auto& preset : factoryPresets) {
+    if (engine == EngineType::bass) for (const auto& preset : factoryPresets) {
         if (name != preset.name)
             continue;
         const auto xml = buildPresetXml(
-            preset.name, preset.params.data(),
+            engine, preset.name, preset.params.data(),
             static_cast<int>(preset.params.size()));
-        return deserializeFromXml(xml, PresetKind::sound)
+        return deserializeFromXml(xml, PresetKind::sound, engine)
             ? ok() : fail(Error::invalidPreset, "invalid factory preset");
     }
 
-    for (const auto& preset : kickFactoryPresets) {
+    if (engine == EngineType::kick) for (const auto& preset : kickFactoryPresets) {
         if (name != preset.name)
             continue;
         const auto xml = buildPresetXml(
-            preset.name, preset.params.data(),
+            engine, preset.name, preset.params.data(),
             static_cast<int>(preset.params.size()));
-        return deserializeFromXml(xml, PresetKind::sound)
+        return deserializeFromXml(xml, PresetKind::sound, engine)
             ? ok() : fail(Error::invalidPreset, "invalid factory preset");
     }
 
+    return fail(Error::fileNotFound, "factory preset not found");
+}
+
+PresetManager::OperationResult PresetManager::loadFactoryPreset(
+    const juce::String& name)
+{
+    for (const auto& preset : factoryPresets)
+        if (name == preset.name) return loadFactoryPreset(EngineType::bass, name);
+    for (const auto& preset : kickFactoryPresets)
+        if (name == preset.name) return loadFactoryPreset(EngineType::kick, name);
     return fail(Error::fileNotFound, "factory preset not found");
 }
 

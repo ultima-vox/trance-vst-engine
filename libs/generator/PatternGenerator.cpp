@@ -25,4 +25,11 @@ Pattern PatternGenerator::generate(const Style style, const std::uint32_t seed)
     }
     return pattern;
 }
+
+Pattern PatternGenerator::generate(const vstengine::parts::PartId part,
+                                   const Style style,
+                                   const std::uint32_t globalSeed)
+{
+    return generate(style, effectiveSeed(part, globalSeed));
+}
 } // namespace vstengine::generator

@@ -1,12 +1,16 @@
 #pragma once
 #include <JuceHeader.h>
+#include <array>
 #include <memory>
 #include "bass/PsyBassVoice.h"
 #include "kick/KickSynth.h"
 #include "match/KickBassMatch.h"
 #include "midi/GeneratedNoteScheduler.h"
-#include "midi/PartMidiRouter.h"
 #include "midi/SourceSelector.h"
+#include "parts/PartMidiDelay.h"
+#include "parts/PartMixer.h"
+#include "parts/PartRouter.h"
+#include "parts/PartState.h"
 #include "preset/PresetManager.h"
 #include "sequence/Sequence.h"
 #include "sequence/RealtimeSequenceBridge.h"
@@ -47,16 +51,31 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState& parameters() noexcept { return apvts; }
-    juce::MidiKeyboardState& keyboardState() noexcept { return midiKeyboardState; }
-    vstengine::sequence::Sequence& sequence() noexcept { return sequenceData; }
-    vstengine::PresetManager* presetManager() noexcept { return presetManager_.get(); }
-    int getCurrentPlayHeadStep() const noexcept { return scheduler.playHeadStep(); }
-    void requestPanic() noexcept { panicRequested.store(true); }
-    void publishSequenceForAudio() noexcept
+    juce::MidiKeyboardState& bassKeyboardState() noexcept { return bassKeyboard; }
+    juce::MidiKeyboardState& kickKeyboardState() noexcept { return kickKeyboard; }
+    juce::MidiKeyboardState& keyboardState() noexcept { return bassKeyboard; }
+    vstengine::sequence::Sequence& partSequence(int partIndex) noexcept
     {
-        sequenceBridge.publish(sequenceData);
+        return parts[static_cast<std::size_t>(juce::jlimit(0, 1, partIndex))].sequence;
     }
-    juce::File createGeneratedMidiFile();
+    vstengine::sequence::Sequence& sequence() noexcept { return partSequence(0); }
+    vstengine::PresetManager* presetManager() noexcept { return presetManager_.get(); }
+    int getPartPlayHeadStep(int partIndex) const noexcept
+    {
+        return schedulers[static_cast<std::size_t>(juce::jlimit(0, 1, partIndex))]
+            .playHeadStep();
+    }
+    int getCurrentPlayHeadStep() const noexcept { return getPartPlayHeadStep(0); }
+    void requestPanic() noexcept { panicRequested.store(true); }
+    void publishPartSequenceForAudio(int partIndex) noexcept;
+    void publishSequenceForAudio() noexcept { publishPartSequenceForAudio(0); }
+    juce::File createPartMidiFile(int partIndex);
+    juce::File createGeneratedMidiFile() { return createPartMidiFile(0); }
+    [[nodiscard]] vstengine::parts::PartRegistry& partRegistry() noexcept
+    {
+        return parts;
+    }
+    [[nodiscard]] bool isPartLocked(int partIndex) const noexcept;
 
     // Kick/bass matching (issue #11 PHASE 6): message-thread only. The
     // analyzer renders real DSP (kick + bass) off the audio callback.
@@ -99,21 +118,31 @@ private:
     static bool containsNoteEvents(const juce::MidiBuffer& midi) noexcept;
     MidiSourceMode currentMidiMode() const noexcept;
     bool keyboardHasActiveNotes() const noexcept;
+    void syncPartControlsFromParameters(
+        vstengine::parts::PartRegistry& destination) noexcept;
+    void syncParametersFromParts();
 
     juce::Synthesiser synth;
     // Synthesized kick voice (issue #11 PHASE 5). Notes on the kick MIDI
     // channel are routed here and consumed before the bass synth runs.
     vstengine::kick::KickSynth kickSynth;
-    juce::MidiKeyboardState midiKeyboardState;
+    juce::MidiKeyboardState bassKeyboard;
+    juce::MidiKeyboardState kickKeyboard;
     juce::AudioProcessorValueTreeState apvts;
-    vstengine::sequence::Sequence sequenceData;
-    vstengine::sequence::RealtimeSequenceBridge sequenceBridge;
-    vstengine::sequence::Sequence audioSequenceData;
+    vstengine::parts::PartRegistry parts;
+    vstengine::parts::PartRegistry audioParts;
+    std::array<vstengine::sequence::RealtimeSequenceBridge, 2> sequenceBridges;
+    std::array<vstengine::sequence::Sequence, 2> audioSequences {
+        vstengine::sequence::Sequence(16), vstengine::sequence::Sequence(16) };
     ApvtsPresetStore presetStore;
     std::unique_ptr<vstengine::PresetManager> presetManager_;
     // Generated-playback state machine (audio thread, see libs/midi).
-    vstengine::midi::GeneratedNoteScheduler scheduler;
-    vstengine::midi::PartMidiRouter partMidiRouter;
+    std::array<vstengine::midi::GeneratedNoteScheduler, 2> schedulers;
+    vstengine::parts::PartRouter partRouter;
+    vstengine::parts::PartMidiBuffers partMidiBuffers;
+    // Existing bounded delay primitive, now applied after authoritative routing
+    // to Bass buffer only. It can never expose another channel to Bass DSP.
+    vstengine::parts::PartMidiDelay bassDelay;
     double currentSampleRate { 44100.0 };
     bool wasTransportPlaying { false };
     std::atomic<bool> panicRequested { false };
@@ -122,11 +151,16 @@ private:
     // every block (clear, processNextMidiBuffer, merge) so the realtime
     // callback never constructs a local MidiBuffer or grows one past this
     // reserved capacity. Capacity is reserved once in prepareToPlay.
-    juce::MidiBuffer keyboardMidiScratch;
+    juce::MidiBuffer bassKeyboardScratch;
+    juce::MidiBuffer kickKeyboardScratch;
+    std::array<bool, 128> bassAuditionNotes {};
+    std::array<bool, 128> kickAuditionNotes {};
     // Same realtime-safety pattern as keyboardMidiScratch: preallocated in
     // prepareToPlay, cleared and reused per block when kick-channel note
     // events must be removed from the block buffer before the bass synth runs.
-    juce::MidiBuffer kickMidiScratch;
+    juce::MidiBuffer bassDelayScratch;
+    juce::AudioBuffer<float> bassAudioScratch;
+    juce::AudioBuffer<float> kickAudioScratch;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VstEngineAudioProcessor)
 };

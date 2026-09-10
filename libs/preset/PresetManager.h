@@ -2,6 +2,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include "sequence/Sequence.h"
+#include <functional>
 
 namespace vstengine {
 
@@ -30,10 +31,11 @@ class PresetManager final {
 public:
     // Explicit preset schema version. Bump when the on-disk format changes and
     // add a migrator in PresetManager.cpp (migrateToCurrentVersion).
-    static constexpr int currentPresetVersion = 1;
+    static constexpr int currentPresetVersion = 2;
 
     enum class PresetKind { sound, full };
-    enum class SoundEngine { none, bass, kick, legacyCombined };
+    enum class EngineType { none, bass, kick, legacyCombined };
+    using SoundEngine = EngineType; // source compatibility with Phase 6 callers
     enum class PresetSource { factory, user };
 
     enum class Error {
@@ -45,7 +47,8 @@ public:
         cannotWrite,
         alreadyExists,
         readOnly,
-        wrongKind
+        wrongKind,
+        wrongEngine
     };
 
     struct OperationResult {
@@ -60,7 +63,7 @@ public:
         juce::String name;
         PresetSource source { PresetSource::user };
         PresetKind kind { PresetKind::sound };
-        SoundEngine engine { SoundEngine::none };
+        EngineType engine { EngineType::none };
         juce::File file;
 
         [[nodiscard]] bool isReadOnly() const noexcept
@@ -69,17 +72,32 @@ public:
         }
     };
 
+    struct FullStateCallbacks {
+        std::function<juce::ValueTree()> capture;
+        std::function<bool(const juce::ValueTree&)> restore;
+    };
+
     PresetManager(PresetStateStore& stateStore,
                   vstengine::sequence::Sequence& seq,
-                  juce::File directory = getPresetDirectory());
+                  juce::File directory = getPresetDirectory(),
+                  FullStateCallbacks fullState = {});
+    PresetManager(PresetStateStore& stateStore,
+                  vstengine::sequence::Sequence& seq,
+                  FullStateCallbacks fullState);
 
+    OperationResult saveSoundPreset(EngineType engine, const juce::String& name);
     OperationResult saveSoundPreset(const juce::String& name,
-                                    SoundEngine engine = SoundEngine::bass);
+                                    EngineType engine = EngineType::bass)
+    {
+        return saveSoundPreset(engine, name);
+    }
     OperationResult saveFullPreset(const juce::String& name);
+    OperationResult loadSoundPreset(EngineType engine, const juce::String& name);
     OperationResult loadSoundPreset(const juce::String& name);
     OperationResult loadFullPreset(const juce::String& name);
     OperationResult loadPreset(const PresetEntry& entry);
     juce::StringArray getSoundPresetNames() const;
+    juce::StringArray getSoundPresetNames(EngineType engine) const;
     juce::StringArray getFullPresetNames() const;
     juce::Array<PresetEntry> getPresets() const;
     OperationResult renamePreset(const juce::String& oldName,
@@ -89,6 +107,9 @@ public:
     OperationResult deletePreset(const juce::String& name);
     OperationResult deletePreset(const PresetEntry& entry);
     juce::StringArray getFactoryPresetNames() const;
+    juce::StringArray getFactoryPresetNames(EngineType engine) const;
+    OperationResult loadFactoryPreset(EngineType engine,
+                                      const juce::String& name);
     OperationResult loadFactoryPreset(const juce::String& name);
     juce::String getCurrentPresetName() const { return currentPresetName; }
 
@@ -97,15 +118,18 @@ private:
     vstengine::sequence::Sequence& sequence;
     juce::File presetDirectory;
     juce::String currentPresetName;
+    FullStateCallbacks fullStateCallbacks;
 
     static juce::File getPresetDirectory();
     void serializeToXml(juce::XmlElement& xml, PresetKind kind,
-                        SoundEngine engine = SoundEngine::none);
-    bool deserializeFromXml(const juce::XmlElement& xml, PresetKind expectedKind);
+                        EngineType engine = EngineType::none);
+    bool deserializeFromXml(const juce::XmlElement& xml, PresetKind expectedKind,
+                            EngineType expectedEngine = EngineType::none);
     OperationResult writePresetFile(const juce::XmlElement& xml,
                                     const juce::String& name);
     OperationResult loadPresetFile(const juce::File& file,
-                                   PresetKind expectedKind);
+                                   PresetKind expectedKind,
+                                   EngineType expectedEngine = EngineType::none);
     OperationResult validateName(const juce::String& name) const;
     bool isFactoryName(const juce::String& name) const;
     juce::String makeSafeFilename(const juce::String& name) const;

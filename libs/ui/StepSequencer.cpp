@@ -32,6 +32,13 @@ StepSequencer::StepSequencer (vstengine::sequence::Sequence& seq, Callbacks* cb)
 }
 void StepSequencer::setLane (Lane value) { if (value < Lane::note || value >= Lane::count) return; lane = value;
     for (size_t i = 0; i < laneButtons.size(); ++i) laneButtons[i].setToggleState (i == static_cast<size_t> (lane), juce::dontSendNotification); repaint(); }
+void StepSequencer::setSlideEnabled (const bool enabled)
+{
+    slideEnabled = enabled;
+    laneButtons[static_cast<size_t> (Lane::slide)].setEnabled (enabled);
+    if (! enabled && lane == Lane::slide)
+        setLane (Lane::note);
+}
 void StepSequencer::refreshFromModel()
 {
     lengthBox.setSelectedId(sequence.size() <= 16 ? 1 : sequence.size() <= 32 ? 2 : 3,
@@ -76,6 +83,7 @@ int StepSequencer::stepAt (juce::Point<int> p) const { const auto grid=gridBound
     return juce::jlimit(0,sequence.size()-1,(p.x-grid.getX())*sequence.size()/juce::jmax(1,grid.getWidth())); }
 void StepSequencer::editAt (juce::Point<int> p, bool initial)
 {
+    if (! slideEnabled && lane == Lane::slide) return;
     const int i=stepAt(p); if(i<0)return; auto& s=sequence[i]; const auto grid=gridBounds(); const float v=juce::jlimit(0.0f,1.0f,1.0f-(float)(p.y-grid.getY())/juce::jmax(1,grid.getHeight()));
     if(lane==Lane::note)s.noteOffset=juce::jlimit(-24,24,juce::roundToInt(v*48-24)); else if(lane==Lane::gate&&(initial||i!=selectedStep))s.gate=!s.gate;
     else if(lane==Lane::velocity)s.velocity=v; else if(lane==Lane::accent&&(initial||i!=selectedStep))s.accent=!s.accent; else if(lane==Lane::probability)s.probability=v;
@@ -84,6 +92,7 @@ void StepSequencer::editAt (juce::Point<int> p, bool initial)
 }
 void StepSequencer::mouseDown(const juce::MouseEvent& e){editAt(e.getPosition(),true);} void StepSequencer::mouseDrag(const juce::MouseEvent& e){editAt(e.getPosition(),false);}
 void StepSequencer::mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& w){const int i=stepAt(e.getPosition());if(i<0)return;auto& s=sequence[i];const int d=w.deltaY>0?1:-1;
+    if (!slideEnabled && lane == Lane::slide) return;
     if(lane==Lane::note)s.noteOffset=juce::jlimit(-24,24,s.noteOffset+d);else if(lane==Lane::velocity)s.velocity=juce::jlimit(0.0f,1.0f,s.velocity+d*.05f);else if(lane==Lane::probability)s.probability=juce::jlimit(0.0f,1.0f,s.probability+d*.05f);else if(lane==Lane::ratchet)s.ratchetCount=juce::jlimit(1,8,s.ratchetCount+d);else if(lane==Lane::slide)s.slideDuration=juce::jlimit(0.0f,8.0f,s.slideDuration+d);if(callbacks)callbacks->onSequenceChanged();repaint(gridBounds());}
 void StepSequencer::fireAction(int a){if(!callbacks)return;switch(a){case 0:callbacks->onCopy();break;case 1:callbacks->onPaste();break;case 2:callbacks->onRotateLeft();break;case 3:callbacks->onRotateRight();break;case 4:callbacks->onReverse();break;case 5:callbacks->onShiftLeft();break;case 6:callbacks->onShiftRight();break;case 7:callbacks->onTransposeUp();break;case 8:callbacks->onTransposeDown();break;case 9:callbacks->onOctaveUp();break;case 10:callbacks->onOctaveDown();break;case 11:callbacks->onMutate();break;case 12:callbacks->onClear();break;default:break;}callbacks->onSequenceChanged();repaint();}
 } // namespace vstengine::ui
