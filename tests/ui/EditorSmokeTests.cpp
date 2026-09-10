@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -20,9 +21,19 @@ int main()
             return EXIT_FAILURE;
     }
 
-    editor->setSize(1040, 680);
-    editor->setSize(1180, 760);
-    editor->setSize(1500, 920);
+    for (const auto size : { juce::Point<int> { 1040, 680 },
+                             juce::Point<int> { 1180, 760 },
+                             juce::Point<int> { 1500, 920 } }) {
+        editor->setSize(size.x, size.y);
+        for (const auto page : { Page::bass, Page::kick }) {
+            const auto coveredWidth = editor->keyboardKeyWidthForTesting(page)
+                                      * 43.0f;
+            const auto componentWidth = static_cast<float>(
+                editor->keyboardComponentWidthForTesting(page));
+            if (std::abs(coveredWidth - componentWidth) > 0.5f)
+                return EXIT_FAILURE;
+        }
+    }
     std::cout << "Editor smoke test passed\n";
     return EXIT_SUCCESS;
 }

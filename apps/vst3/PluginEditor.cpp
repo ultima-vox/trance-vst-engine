@@ -5,6 +5,10 @@
 using Page = vstengine::ui::MainNavigation::Page;
 using PresetManager = vstengine::PresetManager;
 
+namespace {
+constexpr int instrumentKeyboardWhiteKeys = 43; // C1..C7 inclusive
+}
+
 VstEngineAudioProcessorEditor::MidiDragButton::MidiDragButton (
     juce::String text, std::function<juce::File()> create)
     : juce::TextButton (std::move (text)), createFile (std::move (create))
@@ -155,7 +159,11 @@ void VstEngineAudioProcessorEditor::InstrumentPage::resized()
     keyboardLabel.setBounds (auditionHeader.removeFromLeft (190));
     dragButton.setBounds (auditionHeader.removeFromLeft (170).reduced (2));
     status.setBounds (auditionHeader.reduced (8, 0));
-    keyboard.setBounds (audition.reduced (2));
+    const auto keyboardBounds = audition.reduced (2);
+    keyboard.setBounds (keyboardBounds);
+    keyboard.setKeyWidth (static_cast<float> (keyboardBounds.getWidth())
+                          / static_cast<float> (instrumentKeyboardWhiteKeys));
+    keyboard.setLowestVisibleKey (24);
     panel->setBounds (area);
 }
 
@@ -452,6 +460,20 @@ void VstEngineAudioProcessorEditor::showPage (Page page)
 
 void VstEngineAudioProcessorEditor::showPageForTesting (Page page) { showPage (page); }
 Page VstEngineAudioProcessorEditor::currentPageForTesting() const noexcept { return navigation.getCurrentPage(); }
+
+float VstEngineAudioProcessorEditor::keyboardKeyWidthForTesting (
+    const Page page) const noexcept
+{
+    return page == Page::kick ? kick.keyboardKeyWidthForTesting()
+                              : bass.keyboardKeyWidthForTesting();
+}
+
+int VstEngineAudioProcessorEditor::keyboardComponentWidthForTesting (
+    const Page page) const noexcept
+{
+    return page == Page::kick ? kick.keyboardComponentWidthForTesting()
+                              : bass.keyboardComponentWidthForTesting();
+}
 
 void VstEngineAudioProcessorEditor::timerCallback()
 {

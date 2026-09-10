@@ -18,6 +18,10 @@ public:
     void resized() override;
     void showPageForTesting (vstengine::ui::MainNavigation::Page);
     [[nodiscard]] vstengine::ui::MainNavigation::Page currentPageForTesting() const noexcept;
+    [[nodiscard]] float keyboardKeyWidthForTesting (
+        vstengine::ui::MainNavigation::Page) const noexcept;
+    [[nodiscard]] int keyboardComponentWidthForTesting (
+        vstengine::ui::MainNavigation::Page) const noexcept;
 
 private:
     class MidiDragButton final : public juce::TextButton {
@@ -49,6 +53,14 @@ private:
         void paint (juce::Graphics&) override;
         void resized() override;
         void refreshPresets();
+        [[nodiscard]] float keyboardKeyWidthForTesting() const noexcept
+        {
+            return keyboard.getKeyWidth();
+        }
+        [[nodiscard]] int keyboardComponentWidthForTesting() const noexcept
+        {
+            return keyboard.getWidth();
+        }
     private:
         void loadSelectedPreset();
         void selectAdjacentPreset (int delta);
