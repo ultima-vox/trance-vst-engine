@@ -1,6 +1,7 @@
 #include "preset/PresetManager.h"
 #include "core/KickParameterIds.h"
 #include "core/SoundParameterIds.h"
+#include "parts/PartState.h"
 #include <juce_core/juce_core.h>
 #include <cstdio>
 #include <cmath>
@@ -100,6 +101,40 @@ int main()
 {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
                          .getChildFile("VstEnginePresetTests");
+    // 13: Full preset restores every Part, including independent sequences.
+    {
+        FakeStore store;
+        vstengine::parts::PartRegistry parts;
+        parts[0].midiChannel = 5;
+        parts[0].mute = true;
+        parts[0].sequence[1].gate = true;
+        parts[1].midiChannel = 9;
+        parts[1].solo = true;
+        parts[1].level = 0.42f;
+        parts[1].sequence[7].gate = true;
+        vstengine::PresetManager manager(
+            store, parts[0].sequence, dir,
+            { [&parts] {
+                  return vstengine::parts::PartState::serialize(parts);
+              },
+              [&parts](const juce::ValueTree& state) {
+                  return vstengine::parts::PartState::restore(state, parts);
+              } });
+
+        require(manager.saveFullPreset("All Parts"),
+                "full preset with Parts saves");
+        parts = vstengine::parts::PartRegistry {};
+        require(manager.loadFullPreset("All Parts"),
+                "full preset with Parts loads");
+        require(parts[0].midiChannel == 5 && parts[0].mute
+                    && parts[0].sequence[1].gate,
+                "full preset restores Bass Part");
+        require(parts[1].midiChannel == 9 && parts[1].solo
+                    && std::abs(parts[1].level - 0.42f) < 1.0e-6f
+                    && parts[1].sequence[7].gate,
+                "full preset restores Kick Part");
+    }
+
     dir.deleteRecursively();
     dir.createDirectory();
 
@@ -143,11 +178,18 @@ int main()
                 "bass sound preset saves");
         require(dir.getChildFile("Round Trip Bass.xml").existsAsFile(),
                 "bass sound preset creates file");
+        const auto bassXml = juce::parseXML(
+            dir.getChildFile("Round Trip Bass.xml").loadFileAsString());
+        require(bassXml != nullptr
+                    && bassXml->getStringAttribute("engine") == "bass",
+                "bass sound preset carries engine metadata");
 
         setParam(store.state, "drive", 0.1f);
         setParam(store.state, "kickPitchEnd", 0.8f);
         setParam(store.state, "midiMode", 0.9f);
-        require(manager.loadSoundPreset("Round Trip Bass"),
+        require(manager.loadSoundPreset(
+                    vstengine::PresetManager::EngineType::bass,
+                    "Round Trip Bass"),
                 "sound preset loads");
         require(std::abs(readParam(store.state, "drive") - 0.75f) < 1e-6f,
                 "sound preset round-trips drive value");
@@ -169,9 +211,16 @@ int main()
         require(manager.saveSoundPreset(
                     "Round Trip Kick", vstengine::PresetManager::SoundEngine::kick),
                 "kick sound preset saves");
+        const auto kickXml = juce::parseXML(
+            dir.getChildFile("Round Trip Kick.xml").loadFileAsString());
+        require(kickXml != nullptr
+                    && kickXml->getStringAttribute("engine") == "kick",
+                "kick sound preset carries engine metadata");
         setParam(store.state, "kickPitchEnd", 0.1f);
         setParam(store.state, "drive", 0.2f);
-        require(manager.loadSoundPreset("Round Trip Kick"),
+        require(manager.loadSoundPreset(
+                    vstengine::PresetManager::EngineType::kick,
+                    "Round Trip Kick"),
                 "kick sound preset loads");
         require(std::abs(readParam(store.state, "kickPitchEnd") - 0.35f)
                     < 1e-6f,
@@ -397,7 +446,73 @@ int main()
                 "invalid name rejected");
     }
 
-    // 11: Malformed and future presets fail with useful errors, no state change.
+    // 11: Explicit engine target filters catalogs and rejects cross-loads.
+    {
+        FakeStore store;
+        vstengine::sequence::Sequence seq(16);
+        vstengine::PresetManager manager(store, seq, dir);
+
+        const auto bassFactory = manager.getFactoryPresetNames(
+            vstengine::PresetManager::EngineType::bass);
+        const auto kickFactory = manager.getFactoryPresetNames(
+            vstengine::PresetManager::EngineType::kick);
+        require(bassFactory.size() == 5 && bassFactory.contains("Tight Rolling")
+                    && !bassFactory.contains("Psytrance"),
+                "Bass factory catalog excludes Kick presets");
+        require(kickFactory.size() == 5 && kickFactory.contains("Psytrance")
+                    && !kickFactory.contains("Tight Rolling"),
+                "Kick factory catalog excludes Bass presets");
+
+        setParam(store.state, "drive", 0.64f);
+        setParam(store.state, "kickPitchEnd", 0.27f);
+        require(manager.saveSoundPreset(
+                    vstengine::PresetManager::EngineType::kick,
+                    "Explicit Kick"),
+                "explicit Kick preset saves");
+        require(manager.getSoundPresetNames(
+                    vstengine::PresetManager::EngineType::kick)
+                    .contains("Explicit Kick"),
+                "Kick user catalog contains Kick preset");
+        require(!manager.getSoundPresetNames(
+                    vstengine::PresetManager::EngineType::bass)
+                    .contains("Explicit Kick"),
+                "Bass user catalog excludes Kick preset");
+
+        setParam(store.state, "drive", 0.11f);
+        setParam(store.state, "kickPitchEnd", 0.91f);
+        const auto wrongSound = manager.loadSoundPreset(
+            vstengine::PresetManager::EngineType::bass, "Explicit Kick");
+        require(wrongSound.error
+                    == vstengine::PresetManager::Error::wrongEngine,
+                "Kick user preset rejected by Bass target");
+        require(readParam(store.state, "drive") == 0.11f
+                    && readParam(store.state, "kickPitchEnd") == 0.91f,
+                "wrong-engine user load leaves both engines untouched");
+
+        const auto wrongFactory = manager.loadFactoryPreset(
+            vstengine::PresetManager::EngineType::bass, "Psytrance");
+        require(wrongFactory.error
+                    == vstengine::PresetManager::Error::fileNotFound,
+                "Kick factory preset rejected by Bass target");
+
+        setParam(store.state, "drive", 0.23f);
+        require(manager.saveSoundPreset(
+                    vstengine::PresetManager::EngineType::bass, "Shared Name"),
+                "Bass can save shared display name");
+        setParam(store.state, "kickPitchEnd", 0.76f);
+        require(manager.saveSoundPreset(
+                    vstengine::PresetManager::EngineType::kick, "Shared Name"),
+                "Kick can save shared display name");
+        int sharedEntries = 0;
+        for (const auto& entry : manager.getPresets())
+            if (entry.source == vstengine::PresetManager::PresetSource::user
+                && entry.name == "Shared Name")
+                ++sharedEntries;
+        require(sharedEntries == 2,
+                "Bass and Kick banks keep same-name presets independently");
+    }
+
+    // 12: Malformed and future presets fail with useful errors, no state change.
     {
         FakeStore store;
         vstengine::sequence::Sequence seq(16);

@@ -25,6 +25,18 @@ int main()
     }
 
     require(a[1].gate && a[2].gate && a[3].gate, "rolling bass core must be present");
+    using vstengine::parts::PartId;
+    const auto bassA = PatternGenerator::generate(PartId::bass, Style::forest, 77u);
+    const auto bassB = PatternGenerator::generate(PartId::bass, Style::forest, 77u);
+    for (std::size_t i = 0; i < bassA.size(); ++i) {
+        require(bassA[i].gate == bassB[i].gate,
+                "same Global Seed + Part + Style reproduces gates");
+        require(bassA[i].noteOffset == bassB[i].noteOffset,
+                "same Global Seed + Part + Style reproduces notes");
+    }
+    require(PatternGenerator::effectiveSeed(PartId::bass, 77u)
+                != PatternGenerator::effectiveSeed(PartId::kick, 77u),
+            "Part seed domains are independent");
     std::cout << "PatternGenerator tests passed\n";
     return EXIT_SUCCESS;
 }
