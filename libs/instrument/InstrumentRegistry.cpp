@@ -21,7 +21,10 @@ bool exceeds(const ResourceBudget& budget, const HostBudgetLimits& limits)
         || budget.maxStateBytes > limits.maxStateBytesPerSlot
         || budget.maxResourceBytes > limits.maxResourceBytesPerSlot
         || budget.maxLatencySamples > limits.maxLatencySamples
-        || budget.maxTailSamples > limits.maxTailSamples;
+        || budget.maxTailSamples > limits.maxTailSamples
+        || budget.maxPatternEvents > limits.maxPatternEventsPerSlot
+        || budget.maxModulationRoutes > limits.maxModulationRoutesPerSlot
+        || budget.scratchBytes > limits.maxScratchBytesPerSlot;
 }
 } // namespace
 
@@ -36,9 +39,14 @@ Resolution InstrumentRegistry::validate(InstrumentProvider& provider,
                || descriptor.stateVersion == 0) {
         result.status = ResolutionStatus::incompatibleSchema;
         result.diagnostic = "instrument schema version mismatch";
-    } else if (!validId(descriptor.id) || descriptor.name.empty()
+    } else if (!validId(descriptor.id) || !validId(descriptor.providerId)
+               || descriptor.name.empty()
                || descriptor.vendor.empty() || descriptor.budget.maxVoices == 0
-               || descriptor.budget.maxMidiEventsPerBlock == 0) {
+               || descriptor.budget.maxMidiEventsPerBlock == 0
+               || descriptor.instrumentVersion == 0
+               || descriptor.minimumHostVersion > hostContractVersion
+               || descriptor.contentVersion == 0
+               || descriptor.supportedPresetSchemaVersions.empty()) {
         result.status = ResolutionStatus::invalidDescriptor;
         result.diagnostic = "invalid instrument descriptor";
     } else if (exceeds(descriptor.budget, limits_)) {
@@ -51,9 +59,10 @@ Resolution InstrumentRegistry::validate(InstrumentProvider& provider,
                 || !std::isfinite(parameter.minimum)
                 || !std::isfinite(parameter.maximum)
                 || !std::isfinite(parameter.defaultValue)
-                || parameter.minimum >= parameter.maximum
+                || parameter.minimum >= parameter.maximum || parameter.step < 0.0f
                 || parameter.defaultValue < parameter.minimum
                 || parameter.defaultValue > parameter.maximum
+                || parameter.preferredMacro >= static_cast<std::int8_t>(macrosPerSlot)
                 || !ids.insert(parameter.id).second) {
                 result.status = ResolutionStatus::invalidDescriptor;
                 result.diagnostic = "invalid instrument parameter descriptor";
@@ -118,7 +127,14 @@ std::unique_ptr<InstrumentInstance> InstrumentRegistry::create(
     result = resolve(instrumentId);
     if (!result)
         return {};
-    auto instance = result.provider->create(instrumentId, context);
+    std::unique_ptr<InstrumentInstance> instance;
+    try {
+        instance = result.provider->create(instrumentId, context);
+    } catch (...) {
+        result.status = ResolutionStatus::constructionFailed;
+        result.diagnostic = "instrument construction threw an exception";
+        return {};
+    }
     if (instance == nullptr) {
         result.status = ResolutionStatus::constructionFailed;
         result.diagnostic = "instrument construction failed";

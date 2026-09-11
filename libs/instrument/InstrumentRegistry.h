@@ -11,6 +11,9 @@ struct HostBudgetLimits {
     std::uint32_t maxResourceBytesPerSlot { 64 * 1024 * 1024 };
     std::uint32_t maxLatencySamples { 192000 };
     std::uint32_t maxTailSamples { 1920000 };
+    std::uint32_t maxPatternEventsPerSlot { 8192 };
+    std::uint32_t maxModulationRoutesPerSlot { 256 };
+    std::uint32_t maxScratchBytesPerSlot { 8 * 1024 * 1024 };
 };
 
 class InstrumentRegistry final {

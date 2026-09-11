@@ -26,6 +26,9 @@ struct VoxInstrumentBudgetV1 {
     std::uint32_t maxResourceBytes;
     std::uint32_t maxLatencySamples;
     std::uint32_t maxTailSamples;
+    std::uint32_t maxPatternEvents;
+    std::uint32_t maxModulationRoutes;
+    std::uint32_t scratchBytes;
 };
 
 struct VoxParameterDescriptorV1 {
@@ -35,6 +38,10 @@ struct VoxParameterDescriptorV1 {
     float minimum;
     float maximum;
     float defaultValue;
+    float step;
+    std::uint32_t type;
+    const char* group;
+    std::int32_t preferredMacro;
     std::uint32_t flags;
 };
 
@@ -44,8 +51,16 @@ struct VoxInstrumentDescriptorV1 {
     std::uint32_t descriptorSchemaVersion;
     std::uint32_t stateSchemaVersion;
     VoxInstrumentIdV1 instrumentId;
+    VoxInstrumentIdV1 providerId;
     const char* displayName;
     const char* vendor;
+    std::uint32_t instrumentVersion;
+    std::uint32_t minimumHostVersion;
+    std::uint32_t contentVersion;
+    std::uint64_t capabilityFlags;
+    std::uint32_t tailPolicy;
+    const std::uint32_t* supportedPresetSchemaVersions;
+    std::uint32_t supportedPresetSchemaVersionCount;
     VoxInstrumentBudgetV1 budget;
     const VoxParameterDescriptorV1* parameters;
     std::uint32_t parameterCount;
@@ -70,19 +85,33 @@ struct VoxProcessContextV1 {
     std::uint32_t transportFlags;
 };
 
+struct VoxPrepareSpecV1 {
+    std::uint32_t structSize;
+    double sampleRate;
+    std::uint32_t maximumBlockSize;
+    std::uint32_t outputChannels;
+};
+
 using VoxInstrumentHandleV1 = void*;
 using VoxCreateInstrumentV1 = VoxInstrumentHandleV1 (*)(
     const VoxInstrumentIdV1*, const void* hostServices) noexcept;
 using VoxDestroyInstrumentV1 = void (*)(VoxInstrumentHandleV1) noexcept;
-using VoxPrepareInstrumentV1 = bool (*)(VoxInstrumentHandleV1, double,
-                                        std::uint32_t) noexcept;
+using VoxPrepareInstrumentV1 = bool (*)(VoxInstrumentHandleV1,
+                                        const VoxPrepareSpecV1*) noexcept;
 using VoxResetInstrumentV1 = void (*)(VoxInstrumentHandleV1) noexcept;
+using VoxSuspendInstrumentV1 = void (*)(VoxInstrumentHandleV1) noexcept;
+using VoxResumeInstrumentV1 = void (*)(VoxInstrumentHandleV1) noexcept;
 using VoxSetInstrumentBypassedV1 = void (*)(VoxInstrumentHandleV1,
                                             bool) noexcept;
 using VoxProcessInstrumentV1 = void (*)(VoxInstrumentHandleV1,
                                         const VoxProcessContextV1*) noexcept;
 using VoxSetParameterV1 = bool (*)(VoxInstrumentHandleV1, const char*,
                                    float) noexcept;
+using VoxLoadStateV1 = bool (*)(VoxInstrumentHandleV1, std::uint32_t,
+                                const std::uint8_t*, std::uint32_t) noexcept;
+using VoxSaveStateV1 = bool (*)(VoxInstrumentHandleV1, std::uint8_t*,
+                                std::uint32_t, std::uint32_t*) noexcept;
+using VoxGetSampleCountV1 = std::uint32_t (*)(VoxInstrumentHandleV1) noexcept;
 
 struct VoxInstrumentApiV1 {
     std::uint32_t structSize;
@@ -93,9 +122,15 @@ struct VoxInstrumentApiV1 {
     VoxDestroyInstrumentV1 destroy;
     VoxPrepareInstrumentV1 prepare;
     VoxResetInstrumentV1 reset;
+    VoxSuspendInstrumentV1 suspend;
+    VoxResumeInstrumentV1 resume;
     VoxSetInstrumentBypassedV1 setBypassed;
     VoxProcessInstrumentV1 process;
     VoxSetParameterV1 setParameter;
+    VoxLoadStateV1 loadState;
+    VoxSaveStateV1 saveState;
+    VoxGetSampleCountV1 latencySamples;
+    VoxGetSampleCountV1 tailSamples;
 };
 
 using VoxGetInstrumentApiV1 = const VoxInstrumentApiV1* (*)() noexcept;

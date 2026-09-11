@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 namespace {
@@ -30,11 +31,14 @@ public:
         return prepared;
     }
     void reset() noexcept override { phase = 0.0; }
+    void suspend() noexcept override { suspended = true; }
+    void resume() noexcept override { suspended = false; }
     void setBypassed(bool value) noexcept override { bypassed = value; }
     void process(const vstengine::instrument::ProcessBlock& block) noexcept override
     {
         ++processCalls;
-        if (!prepared || bypassed || block.sampleCount > spec.maximumBlockSize)
+        if (!prepared || bypassed || suspended
+            || block.sampleCount > spec.maximumBlockSize)
             return;
         for (auto* channel : block.outputs)
             for (std::uint32_t sample = 0; sample < block.sampleCount; ++sample) {
@@ -48,11 +52,28 @@ public:
         gain = value;
         return true;
     }
+    bool loadState(std::uint32_t schema, std::span<const std::byte> payload) noexcept override
+    {
+        if (schema != vstengine::instrument::stateSchemaVersion) return false;
+        if (payload.empty()) return true;
+        if (payload.size() != sizeof(gain)) return false;
+        std::memcpy(&gain, payload.data(), sizeof(gain));
+        return std::isfinite(gain);
+    }
+    bool saveState(std::span<std::byte> destination,
+                   std::uint32_t& written) const noexcept override
+    {
+        written = sizeof(gain);
+        if (destination.size() < written) return false;
+        std::memcpy(destination.data(), &gain, sizeof(gain));
+        return true;
+    }
     std::uint32_t latencySamples() const noexcept override { return 0; }
     std::uint32_t tailSamples() const noexcept override { return 256; }
     vstengine::instrument::PrepareSpec spec;
     bool prepared {};
     bool bypassed {};
+    bool suspended {};
     int processCalls {};
     double phase {};
     float gain { 0.1f };
@@ -64,12 +85,14 @@ public:
                       std::uint32_t voices = 1)
     {
         descriptor.id = "com.ultimavox.reference";
+        descriptor.providerId = "com.ultimavox.test-provider";
         descriptor.name = "Reference Instrument";
         descriptor.vendor = "Ultima Vox";
         descriptor.abiVersion = abi;
         descriptor.budget = { voices, 256, 4096, 0, 0, 256 };
-        descriptor.parameters.push_back(
-            { "gain", "Gain", "", 0.0f, 1.0f, 0.1f, true });
+        descriptor.parameters.push_back({ "gain", "Gain", "", 0.0f, 1.0f,
+            0.1f, 0.0001f, vstengine::instrument::ParameterType::floating, "Output", {},
+            true, true, 0 });
     }
     std::span<const vstengine::instrument::InstrumentDescriptor>
         descriptors() const noexcept override { return { &descriptor, 1 }; }
@@ -146,6 +169,11 @@ int main()
     std::array<float*, 1> bypassOutput { bypassSamples.data() };
     instance->process({ bypassOutput, 8, {}, 48000.0, 145.0, 0.0, true });
     REQUIRE(bypassSamples[7] == 0.0f, "instrument bypass is explicit");
+    instance->setBypassed(false);
+    instance->suspend();
+    instance->process({ bypassOutput, 8, {}, 48000.0, 145.0, 0.0, true });
+    REQUIRE(bypassSamples[7] == 0.0f, "suspend is explicit and bounded");
+    instance->resume();
 
     auto badAbi = std::make_unique<Provider>(contractVersion + 1);
     badAbi->descriptor.id = "com.ultimavox.badabi";
@@ -165,6 +193,7 @@ int main()
 
     const PersistentModuleState missing {
         stateSchemaVersion, 77, "com.ultimavox.not-installed",
+        {}, 0, 0,
         { std::byte { 1 }, std::byte { 2 } }
     };
     auto prepared = prepareModuleState(missing, registry, nullptr);

@@ -2,14 +2,13 @@
 #include <JuceHeader.h>
 #include <array>
 #include <memory>
-#include "bass/PsyBassVoice.h"
+#include "instrument/InstrumentRegistry.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/SourceSelector.h"
-#include "parts/PartMidiDelay.h"
-#include "parts/PartMixer.h"
-#include "parts/PartRouter.h"
 #include "parts/PartState.h"
 #include "preset/PresetManager.h"
+#include "rack/Rack.h"
+#include "rack/RackState.h"
 #include "sequence/Sequence.h"
 #include "sequence/RealtimeSequenceBridge.h"
 
@@ -35,7 +34,11 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.25; }
+    double getTailLengthSeconds() const override
+    {
+        return currentSampleRate > 0.0
+            ? static_cast<double>(rack.tailSamples()) / currentSampleRate : 0.0;
+    }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -47,8 +50,8 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState& parameters() noexcept { return apvts; }
-    juce::MidiKeyboardState& bassKeyboardState() noexcept { return bassKeyboard; }
-    juce::MidiKeyboardState& keyboardState() noexcept { return bassKeyboard; }
+    juce::MidiKeyboardState& bassKeyboardState() noexcept { return keyboard; }
+    juce::MidiKeyboardState& keyboardState() noexcept { return keyboard; }
     vstengine::sequence::Sequence& partSequence(int partIndex) noexcept
     {
         return parts[static_cast<std::size_t>(partIndex == 0 ? 0 : 1)].sequence;
@@ -70,6 +73,28 @@ public:
         return parts;
     }
     [[nodiscard]] bool isPartLocked(int partIndex) const noexcept;
+    [[nodiscard]] vstengine::rack::Rack& instrumentRack() noexcept { return rack; }
+    [[nodiscard]] const vstengine::rack::Rack& instrumentRack() const noexcept { return rack; }
+    void selectSlot(std::size_t index) noexcept
+    {
+        selectedSlot.store(juce::jlimit<std::size_t>(0,
+            vstengine::instrument::maxSlots - 1, index));
+    }
+    [[nodiscard]] std::size_t selectedSlotIndex() const noexcept
+    {
+        return selectedSlot.load();
+    }
+    enum class ChannelConflictAction { reject, swap, move, layer };
+    [[nodiscard]] std::span<const vstengine::instrument::InstrumentDescriptor* const>
+        availableInstruments() const noexcept
+    {
+        return instrumentRegistry.descriptors();
+    }
+    bool loadSlotInstrument(std::size_t, std::string_view,
+                            juce::String& diagnostic);
+    bool assignSlotChannel(std::size_t, int channel,
+                           ChannelConflictAction, juce::String& diagnostic);
+    [[nodiscard]] int nextFreeChannel() const noexcept;
 
 private:
     // APVTS bridge passed to the preset module (vstengine::PresetStateStore).
@@ -98,33 +123,31 @@ private:
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void syncVoiceParameters();
     void seedInitialSequence();
-    void requestVoiceGlide(int noteNumber, float glideSeconds) noexcept;
-    void clearVoiceGlideRequests() noexcept;
     static bool containsNoteEvents(const juce::MidiBuffer& midi) noexcept;
     MidiSourceMode currentMidiMode() const noexcept;
     bool keyboardHasActiveNotes() const noexcept;
     void syncPartControlsFromParameters(
         vstengine::parts::PartRegistry& destination) noexcept;
     void syncParametersFromParts();
+    void syncRackControlsFromParameters() noexcept;
+    void cacheRackParameterPointers();
+    std::size_t convertMidi(const juce::MidiBuffer&,
+                            std::array<VoxMidiEventV1,
+                                vstengine::rack::RackRouter::eventCapacity>&,
+                            std::uint32_t sampleCount) noexcept;
 
-    juce::Synthesiser synth;
-    juce::MidiKeyboardState bassKeyboard;
+    juce::MidiKeyboardState keyboard;
     juce::AudioProcessorValueTreeState apvts;
+    vstengine::instrument::InstrumentRegistry instrumentRegistry;
+    vstengine::rack::Rack rack;
     vstengine::parts::PartRegistry parts;
-    vstengine::parts::PartRegistry audioParts;
     vstengine::sequence::RealtimeSequenceBridge sequenceBridge;
     vstengine::sequence::Sequence audioSequence { 16 };
     ApvtsPresetStore presetStore;
     std::unique_ptr<vstengine::PresetManager> presetManager_;
     // Generated-playback state machine (audio thread, see libs/midi).
     vstengine::midi::GeneratedNoteScheduler scheduler;
-    vstengine::parts::PartRouter partRouter;
-    vstengine::parts::PartMidiBuffers partMidiBuffers;
-    // Existing bounded delay primitive, now applied after authoritative routing
-    // to Bass buffer only. It can never expose another channel to Bass DSP.
-    vstengine::parts::PartMidiDelay bassDelay;
     double currentSampleRate { 44100.0 };
     bool wasTransportPlaying { false };
     std::atomic<bool> panicRequested { false };
@@ -133,11 +156,37 @@ private:
     // every block (clear, processNextMidiBuffer, merge) so the realtime
     // callback never constructs a local MidiBuffer or grows one past this
     // reserved capacity. Capacity is reserved once in prepareToPlay.
-    juce::MidiBuffer bassKeyboardScratch;
-    std::array<bool, 128> bassAuditionNotes {};
-    // Preallocated scratch for delayed Bass MIDI.
-    juce::MidiBuffer bassDelayScratch;
-    juce::AudioBuffer<float> bassAudioScratch;
+    juce::MidiBuffer keyboardScratch;
+    juce::MidiBuffer generatedScratch;
+    std::array<bool, 128> auditionNotes {};
+    std::array<VoxMidiEventV1, vstengine::rack::RackRouter::eventCapacity>
+        hostEvents {};
+    std::array<VoxMidiEventV1, vstengine::rack::RackRouter::eventCapacity>
+        auditionEvents {};
+    std::array<VoxMidiEventV1, vstengine::rack::RackRouter::eventCapacity>
+        generatedEvents {};
+    std::atomic<std::size_t> selectedSlot { 0 };
+    struct RackParameterRefs {
+        std::atomic<float>* midiIn {};
+        std::atomic<float>* layer {};
+        std::atomic<float>* keyLow {};
+        std::atomic<float>* keyHigh {};
+        std::atomic<float>* velocityLow {};
+        std::atomic<float>* velocityHigh {};
+        std::atomic<float>* transpose {};
+        std::atomic<float>* enabled {};
+        std::atomic<float>* mute {};
+        std::atomic<float>* solo {};
+        std::atomic<float>* locked {};
+        std::atomic<float>* level {};
+        std::atomic<float>* pan {};
+        std::array<std::atomic<float>*, vstengine::instrument::macrosPerSlot>
+            macros {};
+    };
+    std::array<RackParameterRefs, vstengine::instrument::maxSlots>
+        rackParameterRefs {};
+    std::array<vstengine::rack::ProcessSlotControls,
+               vstengine::instrument::maxSlots> rackControls {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VstEngineAudioProcessor)
 };

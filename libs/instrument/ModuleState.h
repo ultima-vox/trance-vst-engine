@@ -9,6 +9,9 @@ struct PersistentModuleState {
     std::uint32_t schemaVersion { stateSchemaVersion };
     SlotId slotId {};
     InstrumentId instrumentId;
+    std::string providerId;
+    std::uint32_t instrumentVersion {};
+    std::uint32_t contentVersion {};
     std::vector<std::byte> payload;
 };
 

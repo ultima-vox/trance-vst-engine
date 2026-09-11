@@ -397,7 +397,7 @@ PresetManager::OperationResult PresetManager::saveSoundPreset(
         return validation;
     if (engine != SoundEngine::bass)
         return fail(Error::wrongEngine,
-                    "Kick content is not active in Vox Trance Engine");
+                    "Kick content is not active in Vox Electronic Engine");
     const auto previousName = currentPresetName;
     currentPresetName = name;
     juce::XmlElement xml("VstEnginePreset");
@@ -603,7 +603,7 @@ juce::Array<PresetManager::PresetEntry> PresetManager::getPresets() const
             || (engine == EngineType::kick && (!hasKick || hasBass)))
             continue;
         // Kick sound files remain on disk for migration/export, but are not
-        // active Vox Trance Engine content after checkpoint 7A.
+        // active Vox Electronic Engine content after checkpoint 7A.
         if (engine == EngineType::kick || engine == EngineType::legacyCombined)
             continue;
         entries.add({ nameEl->getAllSubText(), PresetSource::user,

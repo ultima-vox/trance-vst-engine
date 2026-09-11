@@ -24,6 +24,7 @@ inline constexpr std::uint32_t descriptorSchemaVersion =
     VOX_INSTRUMENT_DESCRIPTOR_SCHEMA_V1;
 inline constexpr std::uint32_t stateSchemaVersion =
     VOX_INSTRUMENT_STATE_SCHEMA_V1;
+inline constexpr std::uint32_t hostContractVersion = 1;
 inline constexpr std::size_t maxSlots = 16;
 inline constexpr std::size_t macrosPerSlot = 8;
 
@@ -34,6 +35,19 @@ struct ResourceBudget {
     std::uint32_t maxResourceBytes {};
     std::uint32_t maxLatencySamples {};
     std::uint32_t maxTailSamples {};
+    std::uint32_t maxPatternEvents { 2048 };
+    std::uint32_t maxModulationRoutes { 64 };
+    std::uint32_t scratchBytes {};
+};
+
+enum class ParameterType : std::uint8_t { floating, integer, boolean, choice };
+enum class TailPolicy : std::uint8_t { none, bounded, preserveOnBypass };
+enum Capability : std::uint64_t {
+    notes = 1ULL << 0,
+    sequence = 1ULL << 1,
+    patternGenerator = 1ULL << 2,
+    modulation = 1ULL << 3,
+    standardEditor = 1ULL << 4
 };
 
 struct ParameterDescriptor {
@@ -43,25 +57,44 @@ struct ParameterDescriptor {
     float minimum {};
     float maximum { 1.0f };
     float defaultValue {};
+    float step {};
+    ParameterType type { ParameterType::floating };
+    std::string group;
+    std::vector<std::string> choices;
     bool automatable { true };
+    bool modulatable {};
+    std::int8_t preferredMacro { -1 };
 };
 
 struct InstrumentDescriptor {
     InstrumentId id;
+    std::string providerId;
     std::string name;
     std::string vendor;
+    std::uint32_t instrumentVersion { 1 };
     std::uint32_t abiVersion { contractVersion };
     std::uint32_t descriptorVersion { descriptorSchemaVersion };
     std::uint32_t stateVersion { stateSchemaVersion };
+    std::uint32_t minimumHostVersion { hostContractVersion };
+    std::uint32_t contentVersion { 1 };
+    std::uint64_t capabilities { Capability::notes | Capability::standardEditor };
+    TailPolicy tailPolicy { TailPolicy::bounded };
+    std::vector<std::uint32_t> supportedPresetSchemaVersions { 1 };
     ResourceBudget budget;
     std::vector<ParameterDescriptor> parameters;
 };
 
+enum class ResourceStatus { found, missing, corrupt, incompatible };
+struct ResourceView {
+    ResourceStatus status { ResourceStatus::missing };
+    std::span<const std::byte> bytes;
+    std::uint32_t contentVersion {};
+};
 class ResourceResolver {
 public:
     virtual ~ResourceResolver() = default;
     // Called during construction/state preparation only; never audio callback.
-    virtual std::span<const std::byte> resolve(std::string_view resourceId) = 0;
+    virtual ResourceView resolve(std::string_view resourceId) noexcept = 0;
 };
 
 struct PrepareSpec {
@@ -85,9 +118,16 @@ public:
     virtual ~InstrumentInstance() = default;
     virtual bool prepare(const PrepareSpec&) = 0;
     virtual void reset() noexcept = 0;
+    virtual void suspend() noexcept = 0;
+    virtual void resume() noexcept = 0;
     virtual void setBypassed(bool) noexcept = 0;
     virtual void process(const ProcessBlock&) noexcept = 0;
     virtual bool setParameter(std::string_view id, float plainValue) noexcept = 0;
+    // Persistent sound state only. Runtime voices/envelopes never cross this boundary.
+    virtual bool loadState(std::uint32_t schemaVersion,
+                           std::span<const std::byte> payload) noexcept = 0;
+    virtual bool saveState(std::span<std::byte> destination,
+                           std::uint32_t& bytesWritten) const noexcept = 0;
     virtual std::uint32_t latencySamples() const noexcept = 0;
     virtual std::uint32_t tailSamples() const noexcept = 0;
 };

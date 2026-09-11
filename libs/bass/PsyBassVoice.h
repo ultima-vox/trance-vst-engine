@@ -21,6 +21,30 @@ public:
     void renderNextBlock(juce::AudioBuffer<float>&,
                          int startSample, int numSamples) override;
 
+    // Lock-free monophonic module path. JUCE Synthesiser remains supported by
+    // legacy tests, but active Rack calls these methods directly.
+    void prepareDirect(double sampleRate) noexcept
+    {
+        setCurrentPlaybackSampleRate(sampleRate);
+        directActive = false;
+    }
+    void noteOnDirect(int note, float velocity) noexcept
+    {
+        directActive = true;
+        startNote(note, velocity, nullptr, 0);
+    }
+    void noteOffDirect(bool allowTailOff = true) noexcept
+    {
+        stopNote(0.0f, allowTailOff);
+        if (!allowTailOff) directActive = false;
+    }
+    void resetDirect() noexcept
+    {
+        noteOffDirect(false);
+        phase = 0.0;
+        resetFilterState();
+    }
+
     // Drive / saturation
     void setDrive(float v) noexcept { drive = v; }
 
@@ -129,6 +153,7 @@ private:
     float drive { 1.8f };
     float smoothedDrive { 1.8f };
     float outputLevel { 1.0f };
+    bool directActive {};
 };
 
 } // namespace vstengine::bass

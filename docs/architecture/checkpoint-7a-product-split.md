@@ -1,8 +1,8 @@
-# Checkpoint 7A: product split
+# Checkpoint 7A: Vox Electronic Engine product split
 
 Contract source: issue #11 Architecture Addenda v4.1-v4.6 and delivery policy.
 
-## Active Vox Trance Engine surface
+## Active Vox Electronic Engine surface
 
 - Same VST3 identity: bundle `com.ultimavox.vstengine`, manufacturer `UlVx`,
   plugin code `DkP1`.
@@ -13,7 +13,7 @@ Contract source: issue #11 Architecture Addenda v4.1-v4.6 and delivery policy.
 
 ## Removed product content
 
-- Kick DSP, tests and panel moved to `legacy/vox_trance_drums`.
+- Kick DSP, tests and panel moved to `legacy/vox_drum_engine`.
 - MATCH analysis, tests and panel moved to `legacy/mastering_engine`.
 - Neither tree has an active CMake target or runtime registration.
 - CH2 and every non-Bass channel produce no audio in transitional 7A runtime.

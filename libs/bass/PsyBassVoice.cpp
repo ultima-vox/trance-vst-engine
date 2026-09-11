@@ -18,13 +18,14 @@ void PsyBassVoice::updateFilterCoefficients(const double sampleRate,
     // Map normalized cutoff [0,1] to Hz. The 2-pole low-pass (12 dB/oct)
     // keeps the bass body while the resonance adds the characteristic "acid"
     // response.
-    const auto baseCutoffHz = static_cast<double>(juce::jmap(
-        juce::jlimit(0.01f, 1.0f, filterCutoffSmooth), 25.0f, 14000.0f));
+    const auto normalized = static_cast<double>(
+        juce::jlimit(0.0f, 1.0f, filterCutoffSmooth));
+    const auto baseCutoffHz = 35.0 * std::pow(12000.0 / 35.0, normalized);
 
     // Key tracking: higher notes open the filter. Reference note A2 (MIDI 45).
     const float keyOffset = keyTracking * static_cast<float>(midiNoteNumber - 45);
     const auto cutoffHz = juce::jlimit(
-        25.0, 18000.0, baseCutoffHz * (1.0 + keyOffset * 0.06));
+        25.0, 18000.0, baseCutoffHz * std::pow(2.0, keyOffset / 12.0));
 
     // Resonance -> Q (0.7..8.0)
     const auto Q = static_cast<double>(juce::jmap(
@@ -112,7 +113,7 @@ void PsyBassVoice::stopNote(const float, const bool allowTailOff)
 void PsyBassVoice::renderNextBlock(juce::AudioBuffer<float>& output,
                                    const int startSample, const int numSamples)
 {
-    if (!isVoiceActive())
+    if (!directActive && !isVoiceActive())
         return;
 
     // Gain compensation: reduce the pre-distortion level as drive increases so
@@ -163,10 +164,13 @@ void PsyBassVoice::renderNextBlock(juce::AudioBuffer<float>& output,
 
         const auto frequency = currentFrequency * std::pow(2.0, semitones / 12.0);
 
-        // --- Oscillator: sine + 2nd harmonic ---
-        const auto fundamental = static_cast<float>(std::sin(phase));
-        const auto harmonic = static_cast<float>(0.20 * std::sin(phase * 2.0));
-        const auto raw = (fundamental + harmonic) * level;
+        // Saw-derived, phase-shaped core: dense deterministic harmonics give
+        // filter drive and saturation enough material for rolling psy bass.
+        const auto cycle = static_cast<float>(phase
+            / juce::MathConstants<double>::twoPi);
+        const auto saw = 2.0f * cycle - 1.0f;
+        const auto pulse = cycle < 0.42f ? 1.0f : -1.0f;
+        const auto raw = (0.72f * saw + 0.28f * pulse) * level;
 
         // --- Amp envelope ---
         const auto envLevel = ampEnvelope.getNextSample();
@@ -207,6 +211,7 @@ void PsyBassVoice::renderNextBlock(juce::AudioBuffer<float>& output,
         ++pitchEnvPosition;
 
         if (!ampEnvelope.isActive()) {
+            directActive = false;
             clearCurrentNote();
             break;
         }

@@ -1,481 +1,307 @@
 #include "PluginEditor.h"
+#include "instrument/HostParameterSchema.h"
 #include "ui/common/UiComponents.h"
-#include <ctime>
+#include <array>
+#include <cstdio>
 
 using Page = vstengine::ui::MainNavigation::Page;
-using PresetManager = vstengine::PresetManager;
-
 namespace {
-constexpr int instrumentKeyboardWhiteKeys = 43; // C1..C7 inclusive
-}
-
-VstEngineAudioProcessorEditor::MidiDragButton::MidiDragButton (
-    juce::String text, std::function<juce::File()> create)
-    : juce::TextButton (std::move (text)), createFile (std::move (create))
+std::string slotId(std::size_t slot, std::string_view suffix)
 {
-    vstengine::ui::styleButton (*this);
+    char prefix[16] {};
+    std::snprintf(prefix, sizeof(prefix), "slot%02zu", slot + 1);
+    return std::string(prefix) + std::string(suffix);
 }
-
-void VstEngineAudioProcessorEditor::MidiDragButton::mouseDown (
-    const juce::MouseEvent& event)
+void knob(juce::Slider& slider)
 {
-    started = false;
-    juce::TextButton::mouseDown (event);
+    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 62, 18);
 }
-
-void VstEngineAudioProcessorEditor::MidiDragButton::mouseDrag (
-    const juce::MouseEvent& event)
+juce::String resolutionText(vstengine::instrument::ResolutionStatus status)
 {
-    juce::TextButton::mouseDrag (event);
-    if (started || event.getDistanceFromDragStart() < 6 || ! createFile)
-        return;
-    const auto file = createFile();
-    if (! file.existsAsFile())
-        return;
-    started = true;
-    juce::StringArray files;
-    files.add (file.getFullPathName());
-    juce::DragAndDropContainer::performExternalDragDropOfFiles (files, false,
-                                                                this);
-}
-
-VstEngineAudioProcessorEditor::InstrumentPage::InstrumentPage (
-    juce::AudioProcessorValueTreeState& state,
-    juce::MidiKeyboardState& keyboardState,
-    PresetManager& manager,
-    PresetManager::SoundEngine soundEngine,
-    juce::String partName,
-    const char* channelParameter,
-    const char* muteParameter,
-    const char* soloParameter,
-    const char* lockParameter,
-    const char* levelParameter,
-    const char* panParameter,
-    std::unique_ptr<juce::Component> enginePanel,
-    std::function<juce::File()> createMidiFile,
-    std::function<void()> onStateChanged)
-    : presetManager (manager), engine (soundEngine),
-      stateChanged (std::move (onStateChanged)), panel (std::move (enginePanel)),
-      keyboard (keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard),
-      dragButton ("DRAG " + partName + " MIDI", std::move (createMidiFile))
-{
-    title.setText (partName, juce::dontSendNotification);
-    presetLabel.setText ("Preset", juce::dontSendNotification);
-    channelLabel.setText ("CH", juce::dontSendNotification);
-    levelLabel.setText ("Level", juce::dontSendNotification);
-    panLabel.setText ("Pan", juce::dontSendNotification);
-    keyboardLabel.setText (partName + " KEYBOARD / PIANO",
-                           juce::dontSendNotification);
-    status.setText ("Audition and MIDI export route only to " + partName + ".",
-                    juce::dontSendNotification);
-    vstengine::ui::styleLabel (title, 17, juce::Justification::centredLeft,
-                               vstengine::ui::colours::primary);
-    for (auto* label : { &presetLabel, &channelLabel, &levelLabel, &panLabel,
-                         &keyboardLabel, &status })
-        vstengine::ui::styleLabel (*label, 12, juce::Justification::centredLeft,
-                                   label == &keyboardLabel
-                                       ? vstengine::ui::colours::primary
-                                       : vstengine::ui::colours::mutedText);
-
-    preset.setEditableText (true);
-    preset.setTextWhenNothingSelected ("Select preset");
-    preset.onChange = [this] { loadSelectedPreset(); };
-    for (auto* button : { &previous, &next, &save, &saveAs, &mute, &solo, &lock }) {
-        vstengine::ui::styleButton (*button);
-        addAndMakeVisible (*button);
+    using S = vstengine::instrument::ResolutionStatus;
+    switch (status) {
+        case S::resolved: return "Ready";
+        case S::missingModule: return "Missing";
+        case S::incompatibleAbi: return "Incompatible ABI";
+        case S::incompatibleSchema: return "Incompatible state";
+        case S::invalidDescriptor: return "Invalid descriptor";
+        case S::budgetExceeded: return "Budget exceeded";
+        case S::constructionFailed: return "Load failed";
     }
-    previous.onClick = [this] { selectAdjacentPreset (-1); };
-    next.onClick = [this] { selectAdjacentPreset (1); };
-    save.onClick = [this] { savePreset (false); };
-    saveAs.onClick = [this] { savePreset (true); };
-    for (auto* button : { &mute, &solo, &lock })
-        button->setClickingTogglesState (true);
+    return "Unknown";
+}
+} // namespace
 
-    channel.setSliderStyle (juce::Slider::LinearHorizontal);
-    channel.setTextBoxStyle (juce::Slider::TextBoxRight, false, 34, 22);
-    level.setSliderStyle (juce::Slider::LinearHorizontal);
-    level.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 22);
-    pan.setSliderStyle (juce::Slider::LinearHorizontal);
-    pan.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 22);
-    keyboard.setAvailableRange (24, 96);
-    keyboard.setOctaveForMiddleC (3);
-
-    const std::array<juce::Component*, 14> components {
-        &title, &presetLabel, &preset, &channelLabel, &channel, &levelLabel, &level,
-        &panLabel, &pan, &keyboardLabel, &keyboard, &dragButton, &status, panel.get()
+VstEngineAudioProcessorEditor::RackPage::RackPage(VstEngineAudioProcessor& p)
+    : processor(p),
+      keyboard(p.keyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard)
+{
+    vstengine::ui::styleLabel(title, 15, juce::Justification::centredLeft,
+                              vstengine::ui::colours::primary);
+    title.setText("GENERIC INSTRUMENT RACK", juce::dontSendNotification);
+    vstengine::ui::styleLabel(routingTitle, 12, juce::Justification::centredLeft,
+                              vstengine::ui::colours::mutedText);
+    routingTitle.setText("ROUTING / ZONES / MIX", juce::dontSendNotification);
+    vstengine::ui::styleLabel(macroTitle, 12, juce::Justification::centredLeft,
+                              vstengine::ui::colours::mutedText);
+    macroTitle.setText("CUBASE AUTOMATION MACROS", juce::dontSendNotification);
+    vstengine::ui::styleLabel(status, 12, juce::Justification::centredLeft,
+                              vstengine::ui::colours::mutedText);
+    const std::array<juce::Component*, 22> components {
+        &title, &routingTitle, &macroTitle, &status, &instrument, &midiIn,
+        &layer, &enabled, &mute, &solo, &locked, &keyLow, &keyHigh,
+        &velocityLow, &velocityHigh, &transpose, &level, &pan, &keyboard,
+        &swap, &move, &layerAction
     };
     for (auto* component : components)
-        addAndMakeVisible (component);
-
-    sliderAttachments[0] = std::make_unique<SliderAttachment> (state, channelParameter,
-                                                               channel);
-    sliderAttachments[1] = std::make_unique<SliderAttachment> (state, levelParameter,
-                                                               level);
-    sliderAttachments[2] = std::make_unique<SliderAttachment> (state, panParameter,
-                                                               pan);
-    buttonAttachments[0] = std::make_unique<ButtonAttachment> (state, muteParameter,
-                                                               mute);
-    buttonAttachments[1] = std::make_unique<ButtonAttachment> (state, soloParameter,
-                                                               solo);
-    buttonAttachments[2] = std::make_unique<ButtonAttachment> (state, lockParameter,
-                                                               lock);
-    refreshPresets();
+        addAndMakeVisible(component);
+    midiIn.addItem("OFF", 1);
+    for (int channel = 1; channel <= 16; ++channel)
+        midiIn.addItem("CH" + juce::String(channel), channel + 1);
+    int item = 1;
+    for (const auto* descriptor : processor.availableInstruments())
+        instrument.addItem(descriptor->name, item++);
+    for (auto* slider : { &keyLow, &keyHigh, &velocityLow, &velocityHigh,
+                          &transpose, &level, &pan }) knob(*slider);
+    for (std::size_t i = 0; i < macros.size(); ++i) {
+        knob(macros[i]);
+        vstengine::ui::styleLabel(macroLabels[i], 10,
+            juce::Justification::centred, vstengine::ui::colours::mutedText);
+        addAndMakeVisible(macros[i]); addAndMakeVisible(macroLabels[i]);
+    }
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        vstengine::ui::styleButton(slots[i]);
+        slots[i].onClick = [this, i] { select(i); };
+        addAndMakeVisible(slots[i]);
+    }
+    for (auto* button : { &swap, &move, &layerAction })
+        vstengine::ui::styleButton(*button);
+    swap.onClick = [this] { applyChannel(VstEngineAudioProcessor::ChannelConflictAction::swap); };
+    move.onClick = [this] { applyChannel(VstEngineAudioProcessor::ChannelConflictAction::move); };
+    layerAction.onClick = [this] { applyChannel(VstEngineAudioProcessor::ChannelConflictAction::layer); };
+    midiIn.onChange = [this] {
+        pendingChannel = midiIn.getSelectedId() - 1;
+        applyChannel(VstEngineAudioProcessor::ChannelConflictAction::reject);
+    };
+    instrument.onChange = [this] {
+        const int index = instrument.getSelectedItemIndex();
+        const auto descriptors = processor.availableInstruments();
+        if (index < 0 || index >= static_cast<int>(descriptors.size())) return;
+        juce::String message;
+        processor.loadSlotInstrument(selected, descriptors[static_cast<std::size_t>(index)]->id,
+                                     message);
+        status.setText(message, juce::dontSendNotification);
+        refresh();
+    };
+    select(0);
 }
 
-void VstEngineAudioProcessorEditor::InstrumentPage::paint (juce::Graphics& g)
+void VstEngineAudioProcessorEditor::RackPage::select(std::size_t index)
 {
-    g.fillAll (vstengine::ui::colours::background);
-    g.setColour (vstengine::ui::colours::panel);
-    g.fillRoundedRectangle (8.0f, 6.0f, static_cast<float> (getWidth() - 16), 48.0f,
-                            8.0f);
-    g.fillRoundedRectangle (8.0f, static_cast<float> (getHeight() - 120),
-                            static_cast<float> (getWidth() - 16), 112.0f, 8.0f);
+    selected = juce::jlimit<std::size_t>(0, slots.size() - 1, index);
+    processor.selectSlot(selected);
+    for (std::size_t i = 0; i < slots.size(); ++i)
+        slots[i].setToggleState(i == selected, juce::dontSendNotification);
+    bindSelectedSlot();
 }
 
-void VstEngineAudioProcessorEditor::InstrumentPage::resized()
+void VstEngineAudioProcessorEditor::RackPage::applyChannel(
+    VstEngineAudioProcessor::ChannelConflictAction action)
 {
-    auto area = getLocalBounds().reduced (14, 10);
-    auto bar = area.removeFromTop (40);
-    title.setBounds (bar.removeFromLeft (62));
-    presetLabel.setBounds (bar.removeFromLeft (44));
-    preset.setBounds (bar.removeFromLeft (170).reduced (2));
-    previous.setBounds (bar.removeFromLeft (34).reduced (2));
-    next.setBounds (bar.removeFromLeft (34).reduced (2));
-    save.setBounds (bar.removeFromLeft (56).reduced (2));
-    saveAs.setBounds (bar.removeFromLeft (72).reduced (2));
-    channelLabel.setBounds (bar.removeFromLeft (24));
-    channel.setBounds (bar.removeFromLeft (88).reduced (2));
-    mute.setBounds (bar.removeFromLeft (34).reduced (2));
-    solo.setBounds (bar.removeFromLeft (34).reduced (2));
-    lock.setBounds (bar.removeFromLeft (50).reduced (2));
-    levelLabel.setBounds (bar.removeFromLeft (36));
-    level.setBounds (bar.removeFromLeft (108).reduced (2));
-    panLabel.setBounds (bar.removeFromLeft (28));
-    pan.setBounds (bar.reduced (2));
-
-    area.removeFromTop (8);
-    auto audition = area.removeFromBottom (104);
-    auto auditionHeader = audition.removeFromTop (26);
-    keyboardLabel.setBounds (auditionHeader.removeFromLeft (190));
-    dragButton.setBounds (auditionHeader.removeFromLeft (170).reduced (2));
-    status.setBounds (auditionHeader.reduced (8, 0));
-    const auto keyboardBounds = audition.reduced (2);
-    keyboard.setBounds (keyboardBounds);
-    keyboard.setKeyWidth (static_cast<float> (keyboardBounds.getWidth())
-                          / static_cast<float> (instrumentKeyboardWhiteKeys));
-    keyboard.setLowestVisibleKey (24);
-    panel->setBounds (area);
-}
-
-void VstEngineAudioProcessorEditor::InstrumentPage::refreshPresets()
-{
-    const auto oldText = preset.getText();
-    availablePresets.clear();
-    preset.clear (juce::dontSendNotification);
-    for (const auto& entry : presetManager.getPresets())
-        if (entry.kind == PresetManager::PresetKind::sound && entry.engine == engine) {
-            availablePresets.add (entry);
-            preset.addItem (entry.name, availablePresets.size());
-        }
-    int index = -1;
-    for (int i = 0; i < availablePresets.size(); ++i)
-        if (availablePresets.getReference (i).name == oldText) {
-            index = i;
-            break;
-        }
-    if (index >= 0)
-        preset.setSelectedItemIndex (index, juce::dontSendNotification);
-    else if (! availablePresets.isEmpty())
-        preset.setSelectedItemIndex (0, juce::dontSendNotification);
-}
-
-void VstEngineAudioProcessorEditor::InstrumentPage::loadSelectedPreset()
-{
-    const int index = preset.getSelectedItemIndex();
-    if (index < 0 || index >= availablePresets.size())
+    juce::String message;
+    if (!processor.assignSlotChannel(selected, pendingChannel, action, message)) {
+        status.setText(message, juce::dontSendNotification);
+        midiIn.setSelectedId(static_cast<int>(
+            processor.instrumentRack().state()[selected].routing.channel) + 1,
+            juce::dontSendNotification);
         return;
-    const auto result = presetManager.loadPreset (availablePresets.getReference (index));
-    status.setText (result.wasOk() ? "Loaded " + preset.getText() : result.message,
-                    juce::dontSendNotification);
-    if (result && stateChanged)
-        stateChanged();
+    }
+    status.setText("Routing updated", juce::dontSendNotification);
 }
 
-void VstEngineAudioProcessorEditor::InstrumentPage::selectAdjacentPreset (int delta)
+void VstEngineAudioProcessorEditor::RackPage::bindSelectedSlot()
 {
-    if (availablePresets.isEmpty())
-        return;
-    const int current = juce::jmax (0, preset.getSelectedItemIndex());
-    preset.setSelectedItemIndex (juce::jlimit (0, availablePresets.size() - 1,
-                                               current + delta),
-                                 juce::sendNotificationSync);
-}
-
-void VstEngineAudioProcessorEditor::InstrumentPage::savePreset (bool saveAsCopy)
-{
-    auto name = preset.getText().trim();
-    if (name.isEmpty())
-        name = "Bass User";
-    if (saveAsCopy)
-        name += " Copy";
-    const auto result = presetManager.saveSoundPreset (name, engine);
-    status.setText (result.wasOk() ? "Saved " + name : result.message,
-                    juce::dontSendNotification);
-    if (result) {
-        preset.setText (name, juce::dontSendNotification);
-        refreshPresets();
+    sliderAttachments.clear(); buttonAttachments.clear();
+    const auto& state = processor.instrumentRack().state()[selected];
+    int descriptorIndex = 0;
+    const auto descriptors = processor.availableInstruments();
+    for (std::size_t i = 0; i < descriptors.size(); ++i)
+        if (descriptors[i]->id == state.instrumentId)
+            descriptorIndex = static_cast<int>(i + 1);
+    instrument.setSelectedId(descriptorIndex, juce::dontSendNotification);
+    pendingChannel = state.routing.mode == vstengine::rack::RouteMode::off
+        ? 0 : state.routing.channel;
+    midiIn.setSelectedId(pendingChannel + 1, juce::dontSendNotification);
+    auto& apvts = processor.parameters();
+    auto attachSlider = [&](juce::Slider& slider, std::string_view suffix) {
+        sliderAttachments.push_back(std::make_unique<
+            juce::AudioProcessorValueTreeState::SliderAttachment>(
+                apvts, slotId(selected, suffix), slider));
+    };
+    auto attachButton = [&](juce::Button& button, std::string_view suffix) {
+        buttonAttachments.push_back(std::make_unique<
+            juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                apvts, slotId(selected, suffix), button));
+    };
+    attachButton(layer, "Layer"); attachButton(enabled, "Enabled");
+    attachButton(mute, "Mute"); attachButton(solo, "Solo");
+    attachButton(locked, "Lock");
+    attachSlider(keyLow, "KeyLow"); attachSlider(keyHigh, "KeyHigh");
+    attachSlider(velocityLow, "VelocityLow");
+    attachSlider(velocityHigh, "VelocityHigh"); attachSlider(transpose, "Transpose");
+    attachSlider(level, "Level"); attachSlider(pan, "Pan");
+    for (std::size_t macro = 0; macro < macros.size(); ++macro) {
+        sliderAttachments.push_back(std::make_unique<
+            juce::AudioProcessorValueTreeState::SliderAttachment>(apvts,
+                vstengine::instrument::hostparams::macroId(selected, macro), macros[macro]));
+        juce::String label(vstengine::instrument::hostparams::macroLabels[macro].data());
+        if (const auto* descriptor = processor.instrumentRack().descriptor(selected))
+            for (const auto& parameter : descriptor->parameters)
+                if (parameter.preferredMacro == static_cast<std::int8_t>(macro))
+                    label = parameter.name;
+        macroLabels[macro].setText(label, juce::dontSendNotification);
     }
 }
 
-VstEngineAudioProcessorEditor::SequencerCallbacks::SequencerCallbacks (
-    VstEngineAudioProcessor& p, int index)
-    : processor (p), partIndex (index)
+void VstEngineAudioProcessorEditor::RackPage::refresh()
 {
+    const auto& states = processor.instrumentRack().state();
+    const auto& runtime = processor.instrumentRack().runtimeState();
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const auto* descriptor = processor.instrumentRack().descriptor(i);
+        const auto name = descriptor ? juce::String(descriptor->name)
+                                     : states[i].instrumentId.empty()
+                                         ? "Empty" : juce::String(states[i].instrumentId);
+        const auto route = states[i].routing.mode == vstengine::rack::RouteMode::off
+            ? "OFF" : "CH" + juce::String(states[i].routing.channel);
+        slots[i].setButtonText(juce::String(static_cast<int>(i + 1)).paddedLeft('0', 2)
+            + "  " + name + "  " + route);
+    }
+    status.setText("SlotId " + juce::String(states[selected].slotId)
+        + " | " + resolutionText(runtime[selected].resolution)
+        + " | drops " + juce::String(runtime[selected].droppedMidiEvents),
+        juce::dontSendNotification);
 }
 
-vstengine::sequence::Sequence&
-VstEngineAudioProcessorEditor::SequencerCallbacks::model() const
+void VstEngineAudioProcessorEditor::RackPage::paint(juce::Graphics& g)
 {
-    return processor.partSequence (partIndex);
+    g.fillAll(vstengine::ui::colours::background);
+    g.setColour(vstengine::ui::colours::panel);
+    g.fillRoundedRectangle(8, 8, 348.0f, static_cast<float>(getHeight() - 16), 8);
+    g.fillRoundedRectangle(364, 8, static_cast<float>(getWidth() - 372),
+                           static_cast<float>(getHeight() - 16), 8);
 }
 
-bool VstEngineAudioProcessorEditor::SequencerCallbacks::editable() const
+void VstEngineAudioProcessorEditor::RackPage::resized()
 {
-    return ! processor.isPartLocked (partIndex);
+    auto area = getLocalBounds().reduced(16);
+    auto list = area.removeFromLeft(332);
+    title.setBounds(list.removeFromTop(28));
+    for (auto& slot : slots) slot.setBounds(list.removeFromTop(31).reduced(1));
+    area.removeFromLeft(24);
+    auto top = area.removeFromTop(38);
+    instrument.setBounds(top.removeFromLeft(220).reduced(2));
+    midiIn.setBounds(top.removeFromLeft(82).reduced(2));
+    swap.setBounds(top.removeFromLeft(64).reduced(2));
+    move.setBounds(top.removeFromLeft(64).reduced(2));
+    layerAction.setBounds(top.removeFromLeft(70).reduced(2));
+    routingTitle.setBounds(area.removeFromTop(22));
+    auto toggles = area.removeFromTop(28);
+    for (auto* button : { &layer, &enabled, &mute, &solo, &locked })
+        button->setBounds(toggles.removeFromLeft(82));
+    auto controls = area.removeFromTop(96);
+    for (auto* slider : { &keyLow, &keyHigh, &velocityLow, &velocityHigh,
+                          &transpose, &level, &pan })
+        slider->setBounds(controls.removeFromLeft(76));
+    macroTitle.setBounds(area.removeFromTop(22));
+    auto macroArea = area.removeFromTop(105);
+    const int width = juce::jmax(60, macroArea.getWidth() / 8);
+    for (std::size_t i = 0; i < macros.size(); ++i) {
+        auto cell = macroArea.removeFromLeft(width);
+        macroLabels[i].setBounds(cell.removeFromTop(20));
+        macros[i].setBounds(cell);
+    }
+    area.removeFromTop(8);
+    keyboard.setKeyWidth(static_cast<float>(area.getWidth()) / 43.0f);
+    keyboard.setAvailableRange(24, 96);
+    keyboard.setBounds(area.removeFromTop(72));
+    status.setBounds(area.removeFromTop(26));
 }
 
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onCopy() { model().copyTo (clipboard); hasClipboard = true; }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onPaste() { if (editable() && hasClipboard) model().paste (clipboard); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateLeft() { if (editable()) model().rotateLeft(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onRotateRight() { if (editable()) model().rotateRight(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onReverse() { if (editable()) model().reverse(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftLeft() { if (editable()) model().shiftLeft(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onShiftRight() { if (editable()) model().shiftRight(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeUp() { if (editable()) model().transpose (1); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onTransposeDown() { if (editable()) model().transpose (-1); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveUp() { if (editable()) model().octaveUp(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onOctaveDown() { if (editable()) model().octaveDown(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onMutate() { if (editable()) model().mutateSelected (static_cast<int> (std::time (nullptr))); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onClear() { if (editable()) model().clearSelected(); }
-void VstEngineAudioProcessorEditor::SequencerCallbacks::onSequenceChanged() { processor.publishPartSequenceForAudio (partIndex); }
-
-VstEngineAudioProcessorEditor::SequencerPage::SequencerPage (
-    VstEngineAudioProcessor& processor)
-    : callbacks (processor, 0), sequence (processor.partSequence (0), &callbacks)
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onCopy(){processor.sequence().copyTo(clipboard);copied=true;}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onPaste(){if(copied)processor.sequence().paste(clipboard);}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onRotateLeft(){processor.sequence().rotateLeft();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onRotateRight(){processor.sequence().rotateRight();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onReverse(){processor.sequence().reverse();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onShiftLeft(){processor.sequence().shiftLeft();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onShiftRight(){processor.sequence().shiftRight();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onTransposeUp(){processor.sequence().transpose(1);}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onTransposeDown(){processor.sequence().transpose(-1);}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onOctaveUp(){processor.sequence().octaveUp();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onOctaveDown(){processor.sequence().octaveDown();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onMutate()
 {
-    vstengine::ui::styleLabel (title, 13, juce::Justification::centredLeft,
-                               vstengine::ui::colours::primary);
-    addAndMakeVisible (title);
-    addAndMakeVisible (sequence);
+    const auto hostSeed = static_cast<std::uint32_t>(
+        processor.parameters().getRawParameterValue("rngSeed")->load());
+    const auto slot = processor.instrumentRack().state()[
+        processor.selectedSlotIndex()].slotId;
+    const auto seed = hostSeed ^ static_cast<std::uint32_t>(slot)
+        ^ (0x9e3779b9u * ++mutationOrdinal);
+    processor.sequence().mutateSelected(static_cast<int>(seed));
+}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onClear(){processor.sequence().clearSelected();}
+void VstEngineAudioProcessorEditor::SequenceCallbacks::onSequenceChanged(){processor.publishSequenceForAudio();}
+
+VstEngineAudioProcessorEditor::SequencePage::SequencePage(VstEngineAudioProcessor& p)
+    : processor(p), callbacks(p), sequencer(p.sequence(), &callbacks)
+{
+    vstengine::ui::styleLabel(status, 12, juce::Justification::centredLeft,
+                              vstengine::ui::colours::mutedText);
+    addAndMakeVisible(sequencer); addAndMakeVisible(status);
+}
+void VstEngineAudioProcessorEditor::SequencePage::paint(juce::Graphics& g){g.fillAll(vstengine::ui::colours::background);}
+void VstEngineAudioProcessorEditor::SequencePage::resized(){auto a=getLocalBounds().reduced(12);status.setBounds(a.removeFromTop(28));sequencer.setBounds(a);}
+void VstEngineAudioProcessorEditor::SequencePage::setPlayHead(int step){sequencer.setPlayHeadPosition(step);}
+void VstEngineAudioProcessorEditor::SequencePage::refresh(){
+    const auto* descriptor=processor.instrumentRack().descriptor(processor.selectedSlotIndex());
+    const bool supported=descriptor && (descriptor->capabilities & vstengine::instrument::Capability::sequence)!=0;
+    sequencer.setEnabled(supported);sequencer.refreshFromModel();
+    status.setText(supported?"Selected instrument sequence":"Selected instrument has no Sequence capability",juce::dontSendNotification);
 }
 
-void VstEngineAudioProcessorEditor::SequencerPage::paint (juce::Graphics& g)
+VstEngineAudioProcessorEditor::SettingsPage::SettingsPage(VstEngineAudioProcessor& p)
 {
-    g.fillAll (vstengine::ui::colours::background);
-    g.setColour (vstengine::ui::colours::panel);
-    g.fillRoundedRectangle (8.0f, 6.0f, static_cast<float> (getWidth() - 16), 42.0f,
-                            8.0f);
-}
-
-void VstEngineAudioProcessorEditor::SequencerPage::resized()
-{
-    auto area = getLocalBounds().reduced (14, 10);
-    auto top = area.removeFromTop (34);
-    title.setBounds (top);
-    area.removeFromTop (8);
-    sequence.setBounds (area);
-}
-
-void VstEngineAudioProcessorEditor::SequencerPage::setPlayHeadPosition (int step)
-{
-    sequence.setPlayHeadPosition (step);
-}
-
-void VstEngineAudioProcessorEditor::SequencerPage::setLocked (const bool locked)
-{
-    sequence.setEnabled (! locked);
-}
-
-void VstEngineAudioProcessorEditor::SequencerPage::refreshFromModels()
-{
-    sequence.refreshFromModel();
-}
-
-VstEngineAudioProcessorEditor::SettingsPage::SettingsPage (
-    juce::AudioProcessorValueTreeState& state, std::function<void()> panic)
-{
-    for (auto* titleLabel : { &midiTitle, &generatorTitle, &systemTitle })
-        vstengine::ui::styleLabel (*titleLabel, 13, juce::Justification::centredLeft,
-                                   vstengine::ui::colours::primary);
-    for (auto* label : { &midiSourceLabel, &seedLabel, &syncLabel, &syncValue, &status })
-        vstengine::ui::styleLabel (*label, 12, juce::Justification::centredLeft,
-                                   vstengine::ui::colours::mutedText);
-    midiMode.addItemList ({ "AUTO", "PIANO ROLL", "GENERATOR", "BOTH" }, 1);
-    seed.setSliderStyle (juce::Slider::LinearHorizontal);
-    seed.setTextBoxStyle (juce::Slider::TextBoxRight, false, 80, 22);
-    vstengine::ui::styleButton (panicButton);
-    panicButton.setColour (juce::TextButton::buttonColourId,
-                           vstengine::ui::colours::warning.darker (0.45f));
-    panicButton.onClick = std::move (panic);
-    const std::array<juce::Component*, 11> components {
-        &midiTitle, &midiSourceLabel, &midiMode, &generatorTitle, &seedLabel,
-        &seed, &syncLabel, &syncValue, &systemTitle, &panicButton, &status
+    title.setText("HOST / GENERATION",juce::dontSendNotification);description.setText("Deterministic seed; Panic resets all Rack slots.",juce::dontSendNotification);
+    vstengine::ui::styleLabel(title,15,juce::Justification::centredLeft,vstengine::ui::colours::primary);vstengine::ui::styleLabel(description,12,juce::Justification::centredLeft,vstengine::ui::colours::mutedText);
+    midiMode.addItemList({"AUTO","PIANO ROLL","GENERATOR","BOTH"},1);knob(seed);vstengine::ui::styleButton(panic);panic.onClick=[&p]{p.requestPanic();};
+    const std::array<juce::Component*, 5> components {
+        &title, &description, &midiMode, &seed, &panic
     };
-    for (auto* component : components)
-        addAndMakeVisible (component);
-    modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        state, "midiMode", midiMode);
-    seedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-        state, "rngSeed", seed);
+    for (auto* component : components) addAndMakeVisible(component);
+    modeAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters(),"midiMode",midiMode);
+    seedAttachment=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.parameters(),"rngSeed",seed);
 }
+void VstEngineAudioProcessorEditor::SettingsPage::paint(juce::Graphics&g){g.fillAll(vstengine::ui::colours::background);}
+void VstEngineAudioProcessorEditor::SettingsPage::resized(){auto a=getLocalBounds().reduced(28);title.setBounds(a.removeFromTop(32));description.setBounds(a.removeFromTop(28));midiMode.setBounds(a.removeFromTop(38).removeFromLeft(220));seed.setBounds(a.removeFromTop(100).removeFromLeft(120));panic.setBounds(a.removeFromTop(42).removeFromLeft(180));}
 
-void VstEngineAudioProcessorEditor::SettingsPage::paint (juce::Graphics& g)
+VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(VstEngineAudioProcessor& p)
+    : AudioProcessorEditor(&p), processor(p),
+      header(p.parameters(),{{},{},[this]{showPage(Page::presets);},[&p]{p.requestPanic();}}),
+      rackPage(p), sequencePage(p), presets(*p.presetManager()), settings(p),
+      pages{&rackPage,&sequencePage,&presets,&settings}
 {
-    g.fillAll (vstengine::ui::colours::background);
-    g.setColour (vstengine::ui::colours::panel);
-    const auto width = (getWidth() - 40) / 3;
-    for (int i = 0; i < 3; ++i)
-        g.fillRoundedRectangle (static_cast<float> (12 + i * (width + 8)), 12.0f,
-                                static_cast<float> (width),
-                                static_cast<float> (getHeight() - 24), 8.0f);
+    addAndMakeVisible(header);addAndMakeVisible(navigation);for(auto*page:pages)addChildComponent(page);
+    navigation.onPageChanged=[this](Page page){showPage(page);};setResizable(true,true);setResizeLimits(1040,680,1600,1000);setSize(1240,800);showPage(Page::rack);startTimerHz(20);
 }
+VstEngineAudioProcessorEditor::~VstEngineAudioProcessorEditor(){stopTimer();}
+void VstEngineAudioProcessorEditor::paint(juce::Graphics&g){g.fillAll(vstengine::ui::colours::background);}
+void VstEngineAudioProcessorEditor::resized(){auto a=getLocalBounds();header.setBounds(a.removeFromTop(58));navigation.setBounds(a.removeFromTop(44).reduced(10,4));for(auto*p:pages)p->setBounds(a.reduced(10,6));}
+void VstEngineAudioProcessorEditor::showPage(Page page){const auto i=static_cast<std::size_t>(page);if(i>=pages.size())return;for(std::size_t n=0;n<pages.size();++n)pages[n]->setVisible(n==i);if(navigation.getCurrentPage()!=page)navigation.setCurrentPage(page);}
+void VstEngineAudioProcessorEditor::showPageForTesting(Page page){showPage(page);}
+Page VstEngineAudioProcessorEditor::currentPageForTesting()const noexcept{return navigation.getCurrentPage();}
+float VstEngineAudioProcessorEditor::keyboardKeyWidthForTesting(Page)const noexcept{return rackPage.keyboardKeyWidth();}
+int VstEngineAudioProcessorEditor::keyboardComponentWidthForTesting(Page)const noexcept{return rackPage.keyboardWidth();}
+void VstEngineAudioProcessorEditor::timerCallback(){processor.publishSequenceForAudio();rackPage.refresh();sequencePage.setPlayHead(processor.getCurrentPlayHeadStep());sequencePage.refresh();header.setTransportActive(processor.getCurrentPlayHeadStep()>=0);if(auto*m=processor.presetManager())header.setPresetName(m->getCurrentPresetName());}
 
-void VstEngineAudioProcessorEditor::SettingsPage::resized()
-{
-    auto area = getLocalBounds().reduced (24);
-    const int width = (area.getWidth() - 16) / 3;
-    auto midi = area.removeFromLeft (width).reduced (12);
-    area.removeFromLeft (8);
-    auto generator = area.removeFromLeft (width).reduced (12);
-    area.removeFromLeft (8);
-    auto system = area.reduced (12);
-    midiTitle.setBounds (midi.removeFromTop (28));
-    midiSourceLabel.setBounds (midi.removeFromTop (22));
-    midiMode.setBounds (midi.removeFromTop (36).reduced (2));
-    generatorTitle.setBounds (generator.removeFromTop (28));
-    seedLabel.setBounds (generator.removeFromTop (22));
-    seed.setBounds (generator.removeFromTop (40));
-    generator.removeFromTop (12);
-    syncLabel.setBounds (generator.removeFromTop (22));
-    syncValue.setBounds (generator.removeFromTop (30));
-    systemTitle.setBounds (system.removeFromTop (28));
-    panicButton.setBounds (system.removeFromTop (44).reduced (2));
-    status.setBounds (system.removeFromTop (48));
-}
-
-VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor (
-    VstEngineAudioProcessor& p)
-    : AudioProcessorEditor (&p), processor (p),
-      header (p.parameters(), { [this] { selectAdjacentPreset (-1); },
-                                [this] { selectAdjacentPreset (1); },
-                                [this] { showPage (Page::presets); },
-                                [&p] { p.requestPanic(); } }),
-      bass (p.parameters(), p.bassKeyboardState(), *p.presetManager(),
-            PresetManager::SoundEngine::bass, "BASS", "midiChannel", "bassMute",
-            "bassSolo", "bassLock", "bassLevel", "bassPan",
-            std::make_unique<vstengine::ui::BassPanel> (p.parameters()),
-            [&p] { return p.createPartMidiFile (0); }, [this] { refreshPartUi(); }),
-      sequence (p),
-      presets (*p.presetManager(), [this] { refreshPartUi(); }),
-      settings (p.parameters(), [&p] { p.requestPanic(); }),
-      pages { &bass, &sequence, &presets, &settings }
-{
-    addAndMakeVisible (header);
-    addAndMakeVisible (navigation);
-    for (auto* page : pages)
-        addChildComponent (page);
-    navigation.onPageChanged = [this] (Page page) { showPage (page); };
-    setResizable (true, true);
-    setResizeLimits (1040, 680, 1600, 1000);
-    setSize (1180, 760);
-    showPage (Page::bass);
-    startTimerHz (30);
-}
-
-VstEngineAudioProcessorEditor::~VstEngineAudioProcessorEditor() { stopTimer(); }
-
-void VstEngineAudioProcessorEditor::paint (juce::Graphics& g)
-{
-    g.fillAll (vstengine::ui::colours::background);
-}
-
-void VstEngineAudioProcessorEditor::resized()
-{
-    auto area = getLocalBounds();
-    header.setBounds (area.removeFromTop (58));
-    navigation.setBounds (area.removeFromTop (44).reduced (10, 4));
-    for (auto* page : pages)
-        page->setBounds (area.reduced (10, 6));
-}
-
-void VstEngineAudioProcessorEditor::showPage (Page page)
-{
-    const auto index = static_cast<size_t> (page);
-    if (index >= pages.size())
-        return;
-    for (size_t i = 0; i < pages.size(); ++i)
-        pages[i]->setVisible (i == index);
-    if (navigation.getCurrentPage() != page)
-        navigation.setCurrentPage (page);
-}
-
-void VstEngineAudioProcessorEditor::showPageForTesting (Page page) { showPage (page); }
-Page VstEngineAudioProcessorEditor::currentPageForTesting() const noexcept { return navigation.getCurrentPage(); }
-
-float VstEngineAudioProcessorEditor::keyboardKeyWidthForTesting (
-    const Page page) const noexcept
-{
-    juce::ignoreUnused (page);
-    return bass.keyboardKeyWidthForTesting();
-}
-
-int VstEngineAudioProcessorEditor::keyboardComponentWidthForTesting (
-    const Page page) const noexcept
-{
-    juce::ignoreUnused (page);
-    return bass.keyboardComponentWidthForTesting();
-}
-
-void VstEngineAudioProcessorEditor::timerCallback()
-{
-    processor.publishPartSequenceForAudio (0);
-    sequence.setPlayHeadPosition (processor.getPartPlayHeadStep (0));
-    sequence.setLocked (processor.isPartLocked (0));
-    const bool playing = processor.getPartPlayHeadStep (0) >= 0;
-    header.setTransportActive (playing);
-    if (auto* manager = processor.presetManager())
-        header.setPresetName (manager->getCurrentPresetName());
-}
-
-void VstEngineAudioProcessorEditor::refreshPartUi()
-{
-    sequence.refreshFromModels();
-    processor.publishPartSequenceForAudio (0);
-    bass.refreshPresets();
-    presets.refresh();
-}
-
-void VstEngineAudioProcessorEditor::selectAdjacentPreset (int delta)
-{
-    auto* manager = processor.presetManager();
-    if (manager == nullptr)
-        return;
-    const auto entries = manager->getPresets();
-    if (entries.isEmpty())
-        return;
-    int current = 0;
-    const auto name = manager->getCurrentPresetName();
-    for (int i = 0; i < entries.size(); ++i)
-        if (entries.getReference (i).name == name) {
-            current = i;
-            break;
-        }
-    const int nextIndex = juce::jlimit (0, entries.size() - 1, current + delta);
-    if (manager->loadPreset (entries.getReference (nextIndex)))
-        refreshPartUi();
-}
-
-juce::AudioProcessorEditor* VstEngineAudioProcessor::createEditor()
-{
-    return new VstEngineAudioProcessorEditor (*this);
-}
+juce::AudioProcessorEditor* VstEngineAudioProcessor::createEditor(){return new VstEngineAudioProcessorEditor(*this);}

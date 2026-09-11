@@ -14,7 +14,7 @@ int main()
         return EXIT_FAILURE;
 
     using Page = vstengine::ui::MainNavigation::Page;
-    for (const auto page : { Page::bass, Page::sequence,
+    for (const auto page : { Page::rack, Page::sequence,
                              Page::presets, Page::settings }) {
         editor->showPageForTesting(page);
         if (editor->currentPageForTesting() != page)
@@ -25,10 +25,10 @@ int main()
                              juce::Point<int> { 1180, 760 },
                              juce::Point<int> { 1500, 920 } }) {
         editor->setSize(size.x, size.y);
-        const auto coveredWidth = editor->keyboardKeyWidthForTesting(Page::bass)
+        const auto coveredWidth = editor->keyboardKeyWidthForTesting(Page::rack)
                                   * 43.0f;
         const auto componentWidth = static_cast<float>(
-            editor->keyboardComponentWidthForTesting(Page::bass));
+            editor->keyboardComponentWidthForTesting(Page::rack));
         if (std::abs(coveredWidth - componentWidth) > 0.5f)
             return EXIT_FAILURE;
     }

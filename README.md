@@ -1,4 +1,4 @@
-# VST Engine
+# Vox Electronic Engine
 
 Generative VST3 instrument for **dark psytrance, psytrance, forest and related electronic music**.
 
@@ -116,8 +116,8 @@ Cubase can then place/import the MIDI clip into the project for normal piano-rol
 
 ## Checkpoint 7A product split
 
-Kick and MATCH are no longer active Vox Trance Engine modules. Their DSP/UI
-snapshots live under `legacy/vox_trance_drums` and `legacy/mastering_engine` for
+Kick and MATCH are no longer active Vox Electronic Engine modules. Their DSP/UI
+snapshots live under `legacy/vox_drum_engine` and `legacy/mastering_engine` for
 future extraction. They are not compiled, registered, routed, rendered or
 listed as factory content by this product.
 

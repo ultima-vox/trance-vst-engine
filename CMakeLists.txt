@@ -36,6 +36,14 @@ add_library(vst_instrument STATIC
   libs/instrument/ModuleState.cpp libs/instrument/ModuleState.h)
 target_include_directories(vst_instrument PUBLIC ${VST_LIBS_DIR})
 
+add_library(vst_rack STATIC
+  libs/rack/RackTypes.h
+  libs/rack/RackRouter.cpp libs/rack/RackRouter.h
+  libs/rack/Rack.cpp libs/rack/Rack.h
+  libs/rack/RackState.cpp libs/rack/RackState.h)
+target_include_directories(vst_rack PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_rack PUBLIC vst_instrument juce::juce_data_structures)
+
 # sequence: canonical Sequence/Step/timing model + serialization.
 add_library(vst_sequence STATIC
   libs/sequence/Sequence.cpp libs/sequence/Sequence.h
@@ -75,6 +83,12 @@ target_include_directories(vst_bass PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_bass PUBLIC
   juce::juce_audio_basics juce::juce_audio_processors)
 
+add_library(vst_modules STATIC
+  libs/modules/BuiltInProvider.cpp libs/modules/BuiltInProvider.h)
+target_include_directories(vst_modules PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_modules PUBLIC
+  vst_instrument vst_bass juce::juce_audio_basics)
+
 # preset: preset format, filesystem, factory/user distinction, migration.
 add_library(vst_preset STATIC
   libs/preset/PresetManager.cpp libs/preset/PresetManager.h)
@@ -110,7 +124,7 @@ juce_add_plugin(VstEngine
   PLUGIN_MANUFACTURER_CODE UlVx
   PLUGIN_CODE DkP1
   FORMATS VST3
-  PRODUCT_NAME "VST Engine"
+  PRODUCT_NAME "Vox Electronic Engine"
   IS_SYNTH TRUE
   NEEDS_MIDI_INPUT TRUE
   NEEDS_MIDI_OUTPUT TRUE
@@ -131,11 +145,13 @@ target_compile_definitions(VstEngine PUBLIC
 
 target_link_libraries(VstEngine PRIVATE
   juce::juce_audio_utils juce::juce_dsp
-  vst_core vst_instrument vst_sequence vst_parts vst_transport vst_midi
-  vst_bass vst_preset vst_generator vst_ui)
+  vst_core vst_instrument vst_rack vst_modules vst_sequence vst_parts
+  vst_transport vst_midi vst_preset vst_generator vst_ui)
 
 if(MSVC)
-  target_compile_options(VstEngine PRIVATE /W4 /permissive-)
+  # JUCE's shared-code target emits one PDB. /FS serializes concurrent compiler
+  # writes when Visual Studio builds PluginProcessor and PluginEditor together.
+  target_compile_options(VstEngine PRIVATE /W4 /permissive- /FS)
 else()
   target_compile_options(VstEngine PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -154,6 +170,14 @@ add_executable(instrument_contract_tests
   tests/instrument/InstrumentContractTests.cpp)
 target_link_libraries(instrument_contract_tests PRIVATE vst_instrument)
 add_test(NAME instrument_contract_tests COMMAND instrument_contract_tests)
+
+add_executable(rack_router_tests tests/rack/RackRouterTests.cpp)
+target_link_libraries(rack_router_tests PRIVATE vst_rack)
+add_test(NAME rack_router_tests COMMAND rack_router_tests)
+
+add_executable(rack_integration_tests tests/rack/RackIntegrationTests.cpp)
+target_link_libraries(rack_integration_tests PRIVATE vst_rack vst_modules)
+add_test(NAME rack_integration_tests COMMAND rack_integration_tests)
 
 add_executable(transport_sync_tests tests/transport/TransportSyncTests.cpp)
 target_link_libraries(transport_sync_tests PRIVATE vst_transport)
@@ -224,3 +248,23 @@ target_include_directories(part_audio_isolation_tests PRIVATE
   ${juce_SOURCE_DIR}/modules)
 target_link_libraries(part_audio_isolation_tests PRIVATE VstEngine)
 add_test(NAME part_audio_isolation_tests COMMAND part_audio_isolation_tests)
+
+# 7C installable product. Keep VST3 bundle name stable for upgrades; CPack
+# provides NSIS install/uninstall and ZIP artifact for CI/review environments.
+install(DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/VstEngine_artefacts/$<CONFIG>/VST3/Vox Electronic Engine.vst3"
+  DESTINATION "VST3")
+set(CPACK_PACKAGE_NAME "Vox Electronic Engine")
+set(CPACK_PACKAGE_VENDOR "Ultima Vox")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Vox Electronic Engine")
+option(VOX_ENABLE_NSIS "Build Windows NSIS installer (requires makensis)" OFF)
+set(CPACK_GENERATOR "ZIP")
+if(VOX_ENABLE_NSIS)
+  set(CPACK_GENERATOR "NSIS;ZIP")
+endif()
+set(CPACK_NSIS_DISPLAY_NAME "Vox Electronic Engine")
+set(CPACK_NSIS_PACKAGE_NAME "Vox Electronic Engine")
+set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+set(CPACK_NSIS_MODIFY_PATH OFF)
+include(CPack)

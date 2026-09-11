@@ -8,8 +8,8 @@ PreparedModuleState prepareModuleState(const PersistentModuleState& state,
 {
     PreparedModuleState prepared;
     prepared.persistent = state;
-    if (state.schemaVersion == 0 || state.schemaVersion > stateSchemaVersion
-        || state.slotId == 0 || state.instrumentId.empty()) {
+    if (state.schemaVersion == 0 || state.slotId == 0
+        || state.instrumentId.empty()) {
         prepared.resolution.status = ResolutionStatus::incompatibleSchema;
         prepared.resolution.diagnostic = "invalid persistent module state";
         return prepared;
@@ -17,7 +17,19 @@ PreparedModuleState prepareModuleState(const PersistentModuleState& state,
     prepared.resolution = registry.resolve(state.instrumentId);
     if (!prepared.resolution)
         return prepared;
-    if (state.schemaVersion > prepared.resolution.descriptor->stateVersion) {
+    const auto& descriptor = *prepared.resolution.descriptor;
+    if ((!state.providerId.empty() && state.providerId != descriptor.providerId)
+        || (state.instrumentVersion != 0
+            && state.instrumentVersion != descriptor.instrumentVersion)
+        || (state.contentVersion != 0
+            && state.contentVersion != descriptor.contentVersion)) {
+        prepared.resolution.status = ResolutionStatus::incompatibleSchema;
+        prepared.resolution.diagnostic = "instrument version/provider mismatch";
+        prepared.resolution.descriptor = nullptr;
+        prepared.resolution.provider = nullptr;
+        return prepared;
+    }
+    if (state.schemaVersion > descriptor.stateVersion) {
         prepared.resolution.status = ResolutionStatus::incompatibleSchema;
         prepared.resolution.diagnostic = "instrument state schema is newer than module";
         prepared.resolution.descriptor = nullptr;
@@ -25,7 +37,7 @@ PreparedModuleState prepareModuleState(const PersistentModuleState& state,
         return prepared;
     }
     if (state.payload.size()
-        > prepared.resolution.descriptor->budget.maxStateBytes) {
+        > descriptor.budget.maxStateBytes) {
         prepared.resolution.status = ResolutionStatus::budgetExceeded;
         prepared.resolution.diagnostic = "instrument state exceeds module budget";
         prepared.resolution.descriptor = nullptr;
@@ -34,6 +46,14 @@ PreparedModuleState prepareModuleState(const PersistentModuleState& state,
     }
     prepared.instance = registry.create(state.instrumentId,
         { state.slotId, resources }, prepared.resolution);
+    if (prepared.instance
+        && !prepared.instance->loadState(state.schemaVersion, state.payload)) {
+        prepared.instance.reset();
+        prepared.resolution.status = ResolutionStatus::incompatibleSchema;
+        prepared.resolution.diagnostic = "instrument rejected persistent state";
+        prepared.resolution.descriptor = nullptr;
+        prepared.resolution.provider = nullptr;
+    }
     return prepared;
 }
 } // namespace vstengine::instrument
