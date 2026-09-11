@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "instrument/HostParameterSchema.h"
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -60,6 +61,17 @@ int main()
     juce::ScopedJuceInitialiser_GUI juce;
     constexpr double audible = 1.0e-7;
     constexpr double silent = 1.0e-12;
+    {
+        VstEngineAudioProcessor automation;
+        for (std::size_t slot = 0; slot < vstengine::instrument::maxSlots; ++slot)
+            for (std::size_t macro = 0;
+                 macro < vstengine::instrument::macrosPerSlot; ++macro) {
+                const auto id = vstengine::instrument::hostparams::macroId(slot, macro);
+                const auto* parameter = automation.parameters().getParameter(id);
+                require(parameter != nullptr && parameter->isAutomatable(),
+                        "stable slot macro exposed to host");
+            }
+    }
     require(renderHostNote(1) > audible, "CH1 renders Bass");
     require(renderHostNote(2) < silent, "removed Kick CH2 stays silent");
     require(renderHostNote(16) < silent, "unassigned channels stay silent");

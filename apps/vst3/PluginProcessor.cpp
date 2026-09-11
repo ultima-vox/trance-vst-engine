@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/MidiExport.h"
+#include "instrument/HostParameterSchema.h"
 #include "preset/PresetManager.h"
 #include <cmath>
 
@@ -584,6 +585,17 @@ VstEngineAudioProcessor::createParameterLayout()
         juce::ParameterID { "matchBassTimingOffsetMs", 1 },
         "Bass Timing Offset",
         0, 16, 0));
+
+    // Stable host-facing automation bank. Module-specific parameters map to
+    // these fixed IDs; loading another module never changes Cubase automation.
+    for (std::size_t slot = 0; slot < vstengine::instrument::maxSlots; ++slot)
+        for (std::size_t macro = 0;
+             macro < vstengine::instrument::macrosPerSlot; ++macro)
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID {
+                    vstengine::instrument::hostparams::macroId(slot, macro), 1 },
+                vstengine::instrument::hostparams::macroName(slot, macro),
+                juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0001f }, 0.0f));
 
     return { params.begin(), params.end() };
 }

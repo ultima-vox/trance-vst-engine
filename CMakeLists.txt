@@ -26,6 +26,16 @@ set(VST_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 add_library(vst_core INTERFACE)
 target_include_directories(vst_core INTERFACE ${VST_LIBS_DIR})
 
+# instrument: versioned external-module-ready ABI, provider registry, stable
+# host automation schema, lifecycle and transactional state preparation.
+add_library(vst_instrument STATIC
+  libs/instrument/InstrumentAbi.h
+  libs/instrument/InstrumentContract.h
+  libs/instrument/HostParameterSchema.cpp libs/instrument/HostParameterSchema.h
+  libs/instrument/InstrumentRegistry.cpp libs/instrument/InstrumentRegistry.h
+  libs/instrument/ModuleState.cpp libs/instrument/ModuleState.h)
+target_include_directories(vst_instrument PUBLIC ${VST_LIBS_DIR})
+
 # sequence: canonical Sequence/Step/timing model + serialization.
 add_library(vst_sequence STATIC
   libs/sequence/Sequence.cpp libs/sequence/Sequence.h
@@ -121,7 +131,7 @@ target_compile_definitions(VstEngine PUBLIC
 
 target_link_libraries(VstEngine PRIVATE
   juce::juce_audio_utils juce::juce_dsp
-  vst_core vst_sequence vst_parts vst_transport vst_midi
+  vst_core vst_instrument vst_sequence vst_parts vst_transport vst_midi
   vst_bass vst_preset vst_generator vst_ui)
 
 if(MSVC)
@@ -139,6 +149,11 @@ enable_testing()
 add_executable(sequence_tests tests/sequence/SequenceTests.cpp)
 target_link_libraries(sequence_tests PRIVATE vst_sequence)
 add_test(NAME sequence_tests COMMAND sequence_tests)
+
+add_executable(instrument_contract_tests
+  tests/instrument/InstrumentContractTests.cpp)
+target_link_libraries(instrument_contract_tests PRIVATE vst_instrument)
+add_test(NAME instrument_contract_tests COMMAND instrument_contract_tests)
 
 add_executable(transport_sync_tests tests/transport/TransportSyncTests.cpp)
 target_link_libraries(transport_sync_tests PRIVATE vst_transport)

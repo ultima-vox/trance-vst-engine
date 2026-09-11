@@ -54,6 +54,7 @@ Modular architecture per issue #11 (independent CMake targets):
 ```text
 apps/vst3/      PluginProcessor (thin VST3/APVTS host adapter), PluginEditor (composition only)
 libs/core/      shared stable IDs/constants          -> vst_core
+libs/instrument/versioned ABI, provider/registry, host macro contract -> vst_instrument
 libs/sequence/  canonical Sequence/Step/timing model -> vst_sequence
 libs/transport/ pure PPQ/grid musical-time math      -> vst_transport
 libs/midi/      source-mode policy, MIDI export, generated-note scheduler -> vst_midi
