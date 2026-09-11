@@ -3,9 +3,7 @@
 #include "PluginProcessor.h"
 #include "ui/BassPanel.h"
 #include "ui/GlobalHeader.h"
-#include "ui/KickPanel.h"
 #include "ui/MainNavigation.h"
-#include "ui/MatchPanel.h"
 #include "ui/PresetBrowser.h"
 #include "ui/StepSequencer.h"
 
@@ -108,16 +106,13 @@ private:
         explicit SequencerPage (VstEngineAudioProcessor&);
         void paint (juce::Graphics&) override;
         void resized() override;
-        void setPlayHeadPositions (int bassStep, int kickStep);
-        void setLockedParts (bool bassLocked, bool kickLocked);
+        void setPlayHeadPosition (int step);
+        void setLocked (bool locked);
         void refreshFromModels();
     private:
-        void selectPart (int partIndex);
-        juce::Label title { {}, "SEQ PART" };
-        juce::TextButton bassButton { "BASS" }, kickButton { "KICK" };
-        SequencerCallbacks bassCallbacks, kickCallbacks;
-        vstengine::ui::StepSequencer bassSequence, kickSequence;
-        int selectedPart {};
+        juce::Label title { {}, "BASS SEQUENCE" };
+        SequencerCallbacks callbacks;
+        vstengine::ui::StepSequencer sequence;
     };
 
     class SettingsPage final : public juce::Component {
@@ -146,11 +141,9 @@ private:
     vstengine::ui::GlobalHeader header;
     vstengine::ui::MainNavigation navigation;
     InstrumentPage bass;
-    InstrumentPage kick;
     SequencerPage sequence;
-    vstengine::ui::MatchPanel match;
     vstengine::ui::PresetBrowser presets;
     SettingsPage settings;
-    std::array<juce::Component*, 6> pages;
+    std::array<juce::Component*, 4> pages;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VstEngineAudioProcessorEditor)
 };

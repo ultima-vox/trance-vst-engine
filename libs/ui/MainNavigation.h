@@ -6,7 +6,7 @@ namespace vstengine::ui {
 
 class MainNavigation final : public juce::Component {
 public:
-    enum class Page { bass, kick, sequence, match, presets, settings, count };
+    enum class Page { bass, sequence, presets, settings, count };
     MainNavigation();
     void resized() override;
     void setCurrentPage (Page);

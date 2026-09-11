@@ -5,7 +5,7 @@ namespace vstengine::ui {
 
 MainNavigation::MainNavigation()
 {
-    static constexpr const char* names[] { "BASS", "KICK", "SEQ", "MATCH", "PRESETS", "SETTINGS" };
+    static constexpr const char* names[] { "BASS", "SEQ", "PRESETS", "SETTINGS" };
     for (size_t i = 0; i < buttons.size(); ++i) {
         auto& button = buttons[i];
         button.setButtonText (names[i]);

@@ -215,7 +215,7 @@ void VstEngineAudioProcessorEditor::InstrumentPage::savePreset (bool saveAsCopy)
 {
     auto name = preset.getText().trim();
     if (name.isEmpty())
-        name = engine == PresetManager::SoundEngine::bass ? "Bass User" : "Kick User";
+        name = "Bass User";
     if (saveAsCopy)
         name += " Copy";
     const auto result = presetManager.saveSoundPreset (name, engine);
@@ -261,25 +261,12 @@ void VstEngineAudioProcessorEditor::SequencerCallbacks::onSequenceChanged() { pr
 
 VstEngineAudioProcessorEditor::SequencerPage::SequencerPage (
     VstEngineAudioProcessor& processor)
-    : bassCallbacks (processor, 0), kickCallbacks (processor, 1),
-      bassSequence (processor.partSequence (0), &bassCallbacks),
-      kickSequence (processor.partSequence (1), &kickCallbacks)
+    : callbacks (processor, 0), sequence (processor.partSequence (0), &callbacks)
 {
-    kickSequence.setSlideEnabled (false);
     vstengine::ui::styleLabel (title, 13, juce::Justification::centredLeft,
                                vstengine::ui::colours::primary);
-    for (auto* button : { &bassButton, &kickButton }) {
-        vstengine::ui::styleButton (*button);
-        button->setClickingTogglesState (true);
-        button->setRadioGroupId (0x534551);
-        addAndMakeVisible (*button);
-    }
-    bassButton.onClick = [this] { selectPart (0); };
-    kickButton.onClick = [this] { selectPart (1); };
     addAndMakeVisible (title);
-    addAndMakeVisible (bassSequence);
-    addChildComponent (kickSequence);
-    selectPart (0);
+    addAndMakeVisible (sequence);
 }
 
 void VstEngineAudioProcessorEditor::SequencerPage::paint (juce::Graphics& g)
@@ -294,41 +281,24 @@ void VstEngineAudioProcessorEditor::SequencerPage::resized()
 {
     auto area = getLocalBounds().reduced (14, 10);
     auto top = area.removeFromTop (34);
-    title.setBounds (top.removeFromLeft (80));
-    bassButton.setBounds (top.removeFromLeft (90).reduced (2));
-    kickButton.setBounds (top.removeFromLeft (90).reduced (2));
+    title.setBounds (top);
     area.removeFromTop (8);
-    bassSequence.setBounds (area);
-    kickSequence.setBounds (area);
+    sequence.setBounds (area);
 }
 
-void VstEngineAudioProcessorEditor::SequencerPage::selectPart (int index)
+void VstEngineAudioProcessorEditor::SequencerPage::setPlayHeadPosition (int step)
 {
-    selectedPart = juce::jlimit (0, 1, index);
-    bassButton.setToggleState (selectedPart == 0, juce::dontSendNotification);
-    kickButton.setToggleState (selectedPart == 1, juce::dontSendNotification);
-    bassSequence.setVisible (selectedPart == 0);
-    kickSequence.setVisible (selectedPart == 1);
+    sequence.setPlayHeadPosition (step);
 }
 
-void VstEngineAudioProcessorEditor::SequencerPage::setPlayHeadPositions (
-    int bassStep, int kickStep)
+void VstEngineAudioProcessorEditor::SequencerPage::setLocked (const bool locked)
 {
-    bassSequence.setPlayHeadPosition (bassStep);
-    kickSequence.setPlayHeadPosition (kickStep);
-}
-
-void VstEngineAudioProcessorEditor::SequencerPage::setLockedParts (
-    const bool bassLocked, const bool kickLocked)
-{
-    bassSequence.setEnabled (! bassLocked);
-    kickSequence.setEnabled (! kickLocked);
+    sequence.setEnabled (! locked);
 }
 
 void VstEngineAudioProcessorEditor::SequencerPage::refreshFromModels()
 {
-    bassSequence.refreshFromModel();
-    kickSequence.refreshFromModel();
+    sequence.refreshFromModel();
 }
 
 VstEngineAudioProcessorEditor::SettingsPage::SettingsPage (
@@ -405,19 +375,10 @@ VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor (
             "bassSolo", "bassLock", "bassLevel", "bassPan",
             std::make_unique<vstengine::ui::BassPanel> (p.parameters()),
             [&p] { return p.createPartMidiFile (0); }, [this] { refreshPartUi(); }),
-      kick (p.parameters(), p.kickKeyboardState(), *p.presetManager(),
-            PresetManager::SoundEngine::kick, "KICK", "kickMidiChannel", "kickMute",
-            "kickSolo", "kickLock", "kickLevel", "kickPan",
-            std::make_unique<vstengine::ui::KickPanel> (p.parameters()),
-            [&p] { return p.createPartMidiFile (1); }, [this] { refreshPartUi(); }),
       sequence (p),
-      match (p.parameters(), { [&p] { return p.analyzeKickBassMatch(); },
-                               [&p] (const auto& adjustments) {
-                                   p.applyMatchAdjustments (adjustments);
-                               } }),
       presets (*p.presetManager(), [this] { refreshPartUi(); }),
       settings (p.parameters(), [&p] { p.requestPanic(); }),
-      pages { &bass, &kick, &sequence, &match, &presets, &settings }
+      pages { &bass, &sequence, &presets, &settings }
 {
     addAndMakeVisible (header);
     addAndMakeVisible (navigation);
@@ -464,28 +425,23 @@ Page VstEngineAudioProcessorEditor::currentPageForTesting() const noexcept { ret
 float VstEngineAudioProcessorEditor::keyboardKeyWidthForTesting (
     const Page page) const noexcept
 {
-    return page == Page::kick ? kick.keyboardKeyWidthForTesting()
-                              : bass.keyboardKeyWidthForTesting();
+    juce::ignoreUnused (page);
+    return bass.keyboardKeyWidthForTesting();
 }
 
 int VstEngineAudioProcessorEditor::keyboardComponentWidthForTesting (
     const Page page) const noexcept
 {
-    return page == Page::kick ? kick.keyboardComponentWidthForTesting()
-                              : bass.keyboardComponentWidthForTesting();
+    juce::ignoreUnused (page);
+    return bass.keyboardComponentWidthForTesting();
 }
 
 void VstEngineAudioProcessorEditor::timerCallback()
 {
     processor.publishPartSequenceForAudio (0);
-    processor.publishPartSequenceForAudio (1);
-    sequence.setPlayHeadPositions (processor.getPartPlayHeadStep (0),
-                                   processor.getPartPlayHeadStep (1));
-    sequence.setLockedParts (processor.isPartLocked (0),
-                             processor.isPartLocked (1));
-    match.refreshCurrentValues();
-    const bool playing = processor.getPartPlayHeadStep (0) >= 0
-                         || processor.getPartPlayHeadStep (1) >= 0;
+    sequence.setPlayHeadPosition (processor.getPartPlayHeadStep (0));
+    sequence.setLocked (processor.isPartLocked (0));
+    const bool playing = processor.getPartPlayHeadStep (0) >= 0;
     header.setTransportActive (playing);
     if (auto* manager = processor.presetManager())
         header.setPresetName (manager->getCurrentPresetName());
@@ -495,9 +451,7 @@ void VstEngineAudioProcessorEditor::refreshPartUi()
 {
     sequence.refreshFromModels();
     processor.publishPartSequenceForAudio (0);
-    processor.publishPartSequenceForAudio (1);
     bass.refreshPresets();
-    kick.refreshPresets();
     presets.refresh();
 }
 

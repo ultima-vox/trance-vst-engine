@@ -1,6 +1,5 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "core/KickParameterIds.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/MidiExport.h"
 #include "preset/PresetManager.h"
@@ -25,9 +24,7 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
     // owned by the sequence module; same generator stream as before).
     seedInitialSequence();
     publishPartSequenceForAudio(0);
-    publishPartSequenceForAudio(1);
-    (void) sequenceBridges[0].read(audioSequences[0]);
-    (void) sequenceBridges[1].read(audioSequences[1]);
+    (void) sequenceBridge.read(audioSequence);
 
     presetManager_ = std::make_unique<vstengine::PresetManager>(
         presetStore, parts[0].sequence,
@@ -54,11 +51,8 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
     // start point.
     const auto globalSeed = static_cast<std::uint32_t>(
         apvts.getRawParameterValue("rngSeed")->load());
-    for (std::size_t i = 0; i < schedulers.size(); ++i) {
-        schedulers[i].reset(sampleRate);
-        schedulers[i].reseedProbability(globalSeed
-            ^ (i == 0 ? 0xB455A11u : 0xC1C4D00Du));
-    }
+    scheduler.reset(sampleRate);
+    scheduler.reseedProbability(globalSeed ^ 0xB455A11u);
 
     // Preallocate the keyboard MIDI scratch buffer using JUCE's intended API.
     // Budget: 4096 bytes covers a dense block of keyboard events (256 events
@@ -66,14 +60,8 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
     // then only clears and reuses — no allocation or growth on the realtime
     // thread.
     bassKeyboardScratch.ensureSize(4096);
-    kickKeyboardScratch.ensureSize(4096);
     partMidiBuffers.prepare(4096);
 
-    // Kick engine: reset voice state for the new rate and preallocate the
-    // scratch buffer used to strip kick-channel note events. Extra capacity
-    // covers all fixed pending-delay slots becoming due in one block without
-    // growing the buffer on the audio thread.
-    kickSynth.prepare(sampleRate);
     bassDelay.reset();
     wasTransportPlaying = false;
     bassDelayScratch.ensureSize(
@@ -82,17 +70,13 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
     const int scratchSamples = juce::jmax(16384, samplesPerBlock);
     bassAudioScratch.setSize(channels, scratchSamples, false,
                              false, true);
-    kickAudioScratch.setSize(channels, scratchSamples, false,
-                             false, true);
 }
 
 void VstEngineAudioProcessor::releaseResources()
 {
     synth.allNotesOff(0, false);
-    kickSynth.reset();
     bassDelay.reset();
-    for (auto& scheduler : schedulers)
-        scheduler.reset(currentSampleRate);
+    scheduler.reset(currentSampleRate);
     wasTransportPlaying = false;
 }
 
@@ -109,19 +93,14 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     const int previousBassChannel = audioParts[0].midiChannel;
-    const int previousKickChannel = audioParts[1].midiChannel;
     syncPartControlsFromParameters(audioParts);
+    audioParts[1].enabled = false;
     if (audioParts[0].midiChannel != previousBassChannel) {
         synth.allNotesOff(0, false);
         bassDelay.reset();
-        schedulers[0].reset(currentSampleRate);
+        scheduler.reset(currentSampleRate);
     }
-    if (audioParts[1].midiChannel != previousKickChannel) {
-        kickSynth.release(0);
-        schedulers[1].reset(currentSampleRate);
-    }
-    for (std::size_t i = 0; i < sequenceBridges.size(); ++i)
-        (void) sequenceBridges[i].read(audioSequences[i]);
+    (void) sequenceBridge.read(audioSequence);
 
     // Explicit transport safety path, separate from ordinary note-off.
     if (auto* hostPlayHead = getPlayHead()) {
@@ -129,10 +108,8 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             const bool playing = position->getIsPlaying();
             if (wasTransportPlaying && !playing) {
                 synth.allNotesOff(0, false);
-                kickSynth.release(0);
                 bassDelay.reset();
-                for (auto& scheduler : schedulers)
-                    scheduler.reset(currentSampleRate);
+                scheduler.reset(currentSampleRate);
             }
             wasTransportPlaying = playing;
         }
@@ -143,11 +120,8 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     clearVoiceGlideRequests();
 
     bassKeyboardScratch.clear();
-    kickKeyboardScratch.clear();
     bassKeyboard.processNextMidiBuffer(
         bassKeyboardScratch, 0, buffer.getNumSamples(), true);
-    kickKeyboard.processNextMidiBuffer(
-        kickKeyboardScratch, 0, buffer.getNumSamples(), true);
     auto trackAudition = [](const juce::MidiBuffer& events,
                             std::array<bool, 128>& notes) {
         for (const auto metadata : events) {
@@ -163,7 +137,6 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     };
     trackAudition(bassKeyboardScratch, bassAuditionNotes);
-    trackAudition(kickKeyboardScratch, kickAuditionNotes);
 
     // MIDI source isolation: the generator decision only sees EXTERNAL host
     // notes (note events present in this block's incoming buffer — computed
@@ -186,24 +159,17 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (panicRequested.exchange(false)) {
         midi.clear();
         synth.allNotesOff(0, false);
-        kickSynth.release(0);
         bassDelay.reset();
-        for (auto& scheduler : schedulers)
-            scheduler.reset(currentSampleRate);
+        scheduler.reset(currentSampleRate);
         bassKeyboard.reset();
-        kickKeyboard.reset();
         bassKeyboardScratch.clear();
-        kickKeyboardScratch.clear();
         bassAuditionNotes.fill(false);
-        kickAuditionNotes.fill(false);
     }
 
     // Authoritative host routing happens before internal sources are added.
     partRouter.route(midi, audioParts, partMidiBuffers);
     for (const auto metadata : partMidiBuffers[0])
         bassKeyboard.processNextMidiEvent(metadata.getMessage());
-    for (const auto metadata : partMidiBuffers[1])
-        kickKeyboard.processNextMidiEvent(metadata.getMessage());
 
     const bool useGenerator = vstengine::midi::shouldRunGenerator(
         mode, incomingHasNotes, keyboardHasNotes);
@@ -234,28 +200,18 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         const auto globalSeed = static_cast<std::uint32_t>(
             apvts.getRawParameterValue("rngSeed")->load());
-        for (std::size_t i = 0; i < parts.size(); ++i) {
-            const auto effectiveSeed = globalSeed
-                ^ (i == 0 ? 0xB455A11u : 0xC1C4D00Du);
-            const int partRoot = i == 0 ? rootNote : 36;
-            schedulers[i].process(partMidiBuffers[i], audioSequences[i], frame,
-                                  buffer.getNumSamples(), currentSampleRate,
-                                  audioParts[i].midiChannel, partRoot, effectiveSeed);
-
-            if (i == 0) {
-                for (int requestIndex = 0;
-                     requestIndex < schedulers[i].numGlideRequests();
-                     ++requestIndex) {
-                    const auto request = schedulers[i].glideRequest(requestIndex);
-                    requestVoiceGlide(request.noteNumber,
-                                      request.glideSeconds);
-                }
-            }
-            schedulers[i].clearGlideRequests();
+        scheduler.process(partMidiBuffers[0], audioSequence, frame,
+                          buffer.getNumSamples(), currentSampleRate,
+                          audioParts[0].midiChannel, rootNote,
+                          globalSeed ^ 0xB455A11u);
+        for (int requestIndex = 0;
+             requestIndex < scheduler.numGlideRequests(); ++requestIndex) {
+            const auto request = scheduler.glideRequest(requestIndex);
+            requestVoiceGlide(request.noteNumber, request.glideSeconds);
         }
+        scheduler.clearGlideRequests();
     } else {
-        for (std::size_t i = 0; i < schedulers.size(); ++i)
-            schedulers[i].flush(partMidiBuffers[i], 0);
+        scheduler.flush(partMidiBuffers[0], 0);
     }
 
     // Audition sources carry an explicit destination, independent of channel.
@@ -264,48 +220,21 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                      metadata.samplePosition,
                                      vstengine::parts::PartId::bass,
                                      audioParts, partMidiBuffers);
-    for (const auto metadata : kickKeyboardScratch)
-        (void) partRouter.routeToPart(metadata.getMessage(),
-                                     metadata.samplePosition,
-                                     vstengine::parts::PartId::kick,
-                                     audioParts, partMidiBuffers);
-
     auto& bassMidi = partMidiBuffers[0];
-    auto& kickMidi = partMidiBuffers[1];
 
-    // Match delay applies after routing, therefore never sees Kick/unknown MIDI.
-    const int bassDelaySamples = static_cast<int>(std::lround(
-        apvts.getRawParameterValue("matchBassTimingOffsetMs")->load()
-        * currentSampleRate / 1000.0));
-    bassDelay.process(bassMidi, bassDelayScratch, buffer.getNumSamples(),
-                      bassDelaySamples);
+    bassDelay.process(bassMidi, bassDelayScratch, buffer.getNumSamples(), 0);
     bassMidi.swapWith(bassDelayScratch);
 
-    for (const auto metadata : kickMidi) {
-        const auto message = metadata.getMessage();
-        if (message.isNoteOn(false))
-            kickSynth.trigger(message.getFloatVelocity(),
-                              message.getNoteNumber(), metadata.samplePosition);
-        else if (message.isController()
-                 && (message.getControllerNumber() == 120
-                     || message.getControllerNumber() == 123))
-            kickSynth.release(metadata.samplePosition);
-    }
-
     syncVoiceParameters();
-    syncKickParameters();
 
     const int channels = buffer.getNumChannels();
     const int samples = buffer.getNumSamples();
     bassAudioScratch.setSize(channels, samples, false, false, true);
-    kickAudioScratch.setSize(channels, samples, false, false, true);
     bassAudioScratch.clear();
-    kickAudioScratch.clear();
     synth.renderNextBlock(bassAudioScratch, bassMidi, 0, samples);
-    kickSynth.render(kickAudioScratch, samples);
 
     vstengine::parts::PartMixer::mix(
-        audioParts, { &bassAudioScratch, &kickAudioScratch }, buffer, samples);
+        audioParts, { &bassAudioScratch, nullptr }, buffer, samples);
 }
 
 void VstEngineAudioProcessor::syncVoiceParameters()
@@ -346,104 +275,6 @@ void VstEngineAudioProcessor::syncVoiceParameters()
     }
 }
 
-void VstEngineAudioProcessor::syncKickParameters()
-{
-    vstengine::kick::KickParams p;
-    p.pitchStart = apvts.getRawParameterValue("kickPitchStart")->load();
-    p.pitchEnd = apvts.getRawParameterValue("kickPitchEnd")->load();
-    p.pitchDecay = apvts.getRawParameterValue("kickPitchDecay")->load();
-    p.pitchCurve = apvts.getRawParameterValue("kickPitchCurve")->load();
-    p.bodyDecay = apvts.getRawParameterValue("kickBodyDecay")->load();
-    p.tail = apvts.getRawParameterValue("kickTail")->load();
-    p.click = apvts.getRawParameterValue("kickClick")->load();
-    p.clickTone = apvts.getRawParameterValue("kickClickTone")->load();
-    p.drive = apvts.getRawParameterValue("kickDrive")->load();
-    p.clip = apvts.getRawParameterValue("kickClip")->load();
-    p.transient = apvts.getRawParameterValue("kickTransient")->load();
-    p.sub = apvts.getRawParameterValue("kickSub")->load();
-    p.tune = apvts.getRawParameterValue("kickTune")->load();
-    p.phase = apvts.getRawParameterValue("kickPhase")->load();
-    p.outputLevel = apvts.getRawParameterValue("kickOutputLevel")->load();
-
-    kickSynth.setParameters(p);
-}
-
-vstengine::match::MatchReport VstEngineAudioProcessor::analyzeKickBassMatch()
-{
-    vstengine::kick::KickParams kick;
-    kick.pitchStart = apvts.getRawParameterValue("kickPitchStart")->load();
-    kick.pitchEnd = apvts.getRawParameterValue("kickPitchEnd")->load();
-    kick.pitchDecay = apvts.getRawParameterValue("kickPitchDecay")->load();
-    kick.pitchCurve = apvts.getRawParameterValue("kickPitchCurve")->load();
-    kick.bodyDecay = apvts.getRawParameterValue("kickBodyDecay")->load();
-    kick.tail = apvts.getRawParameterValue("kickTail")->load();
-    kick.click = apvts.getRawParameterValue("kickClick")->load();
-    kick.clickTone = apvts.getRawParameterValue("kickClickTone")->load();
-    kick.drive = apvts.getRawParameterValue("kickDrive")->load();
-    kick.clip = apvts.getRawParameterValue("kickClip")->load();
-    kick.transient = apvts.getRawParameterValue("kickTransient")->load();
-    kick.sub = apvts.getRawParameterValue("kickSub")->load();
-    kick.tune = apvts.getRawParameterValue("kickTune")->load();
-    kick.phase = apvts.getRawParameterValue("kickPhase")->load();
-    kick.outputLevel = apvts.getRawParameterValue("kickOutputLevel")->load();
-
-    vstengine::match::BassRenderParams bass;
-    bass.drive = apvts.getRawParameterValue("drive")->load();
-    bass.release = apvts.getRawParameterValue("release")->load();
-    bass.ampAttack = apvts.getRawParameterValue("ampAttack")->load();
-    bass.ampDecay = apvts.getRawParameterValue("ampDecay")->load();
-    bass.ampSustain = apvts.getRawParameterValue("ampSustain")->load();
-    bass.filterCutoff = apvts.getRawParameterValue("filterCutoff")->load();
-    bass.filterResonance = apvts.getRawParameterValue("filterResonance")->load();
-    bass.filterDrive = apvts.getRawParameterValue("filterDrive")->load();
-    bass.keyTracking = apvts.getRawParameterValue("keyTracking")->load();
-    bass.pitchEnvAmount = apvts.getRawParameterValue("pitchEnvAmount")->load();
-    bass.pitchEnvTime = apvts.getRawParameterValue("pitchEnvTime")->load();
-    bass.pitchEnvCurve = apvts.getRawParameterValue("pitchEnvCurve")->load();
-    bass.outputLevel = apvts.getRawParameterValue("outputLevel")->load();
-    bass.midiNote = juce::jlimit(
-        0, 127, static_cast<int>(
-                    apvts.getRawParameterValue("rootNote")->load()));
-
-    return vstengine::match::KickBassMatch::analyze(
-        kick, bass, currentSampleRate);
-}
-
-void VstEngineAudioProcessor::applyMatchAdjustments(
-    const vstengine::match::MatchAdjustments& adjustments)
-{
-    // Message-thread path (editor button). Every write clamps to the target
-    // parameter's own numeric range, so nothing can leave the APVTS bounds.
-    auto applyClamped = [this](const char* id, float plainValue) {
-        if (auto* parameter = apvts.getParameter(id)) {
-            const float normalized = juce::jlimit(
-                0.0f, 1.0f, parameter->convertTo0to1(plainValue));
-            parameter->setValue(normalized);
-        }
-    };
-
-    if (auto* parameter = apvts.getParameter("kickTail")) {
-        const float currentPlain = parameter->convertFrom0to1(
-            parameter->getValue());
-        applyClamped("kickTail",
-                     currentPlain
-                         * static_cast<float>(adjustments.kickTailMultiplier));
-    }
-
-    applyClamped("kickPhase", static_cast<float>(adjustments.kickPhaseDeg));
-
-    if (auto* parameter = apvts.getParameter("outputLevel")) {
-        const float currentPlain = parameter->convertFrom0to1(
-            parameter->getValue());
-        const double level = std::pow(10.0, adjustments.bassLevelDb / 20.0);
-        applyClamped("outputLevel",
-                     currentPlain * static_cast<float>(level));
-    }
-
-    applyClamped("matchBassTimingOffsetMs",
-                 static_cast<float>(adjustments.bassTimingOffsetMs));
-}
-
 bool VstEngineAudioProcessor::containsNoteEvents(
     const juce::MidiBuffer& midi) noexcept
 {
@@ -459,7 +290,7 @@ bool VstEngineAudioProcessor::containsNoteEvents(
 bool VstEngineAudioProcessor::keyboardHasActiveNotes() const noexcept
 {
     for (std::size_t note = 0; note < bassAuditionNotes.size(); ++note) {
-        if (bassAuditionNotes[note] || kickAuditionNotes[note])
+        if (bassAuditionNotes[note])
             return true;
     }
 
@@ -484,14 +315,15 @@ void VstEngineAudioProcessor::syncPartControlsFromParameters(
     };
     sync(destination[0], "midiChannel", "bassMute", "bassSolo", "bassLock",
          "bassLevel", "bassPan");
-    sync(destination[1], "kickMidiChannel", "kickMute", "kickSolo", "kickLock",
-         "kickLevel", "kickPan");
+    // Legacy Kick Part remains persistent migration data only. It is never
+    // enabled or routed in active Vox Trance Engine runtime.
+    destination[1].enabled = false;
 }
 
 bool VstEngineAudioProcessor::isPartLocked(const int partIndex) const noexcept
 {
-    const auto* id = partIndex == 1 ? "kickLock" : "bassLock";
-    return apvts.getRawParameterValue(id)->load() >= 0.5f;
+    return partIndex != 0
+        || apvts.getRawParameterValue("bassLock")->load() >= 0.5f;
 }
 
 void VstEngineAudioProcessor::syncParametersFromParts()
@@ -513,14 +345,13 @@ void VstEngineAudioProcessor::syncParametersFromParts()
     };
     sync(parts[0], "midiChannel", "bassMute", "bassSolo", "bassLock",
          "bassLevel", "bassPan");
-    sync(parts[1], "kickMidiChannel", "kickMute", "kickSolo", "kickLock",
-         "kickLevel", "kickPan");
+    juce::ignoreUnused(sync);
 }
 
 void VstEngineAudioProcessor::publishPartSequenceForAudio(const int partIndex) noexcept
 {
-    const auto index = static_cast<std::size_t>(juce::jlimit(0, 1, partIndex));
-    sequenceBridges[index].publish(parts[index].sequence);
+    if (partIndex == 0)
+        sequenceBridge.publish(parts[0].sequence);
 }
 
 VstEngineAudioProcessor::MidiSourceMode
@@ -764,20 +595,19 @@ juce::File VstEngineAudioProcessor::createPartMidiFile(const int partIndex)
     // ratchet and slide behave exactly as documented and identically to
     // realtime playback.
     vstengine::midiexport::Options options;
+    if (partIndex != 0)
+        return {};
     syncPartControlsFromParameters(parts);
-    const auto index = static_cast<std::size_t>(juce::jlimit(0, 1, partIndex));
+    constexpr std::size_t index = 0;
     options.channel = parts[index].midiChannel;
     options.rootNote = juce::jlimit(
         0, 127,
         static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
     options.seed = static_cast<std::uint32_t>(
         apvts.getRawParameterValue("rngSeed")->load())
-        ^ (index == 0 ? 0xB455A11u : 0xC1C4D00Du);
+        ^ 0xB455A11u;
 
     auto exportSequence = parts[index].sequence;
-    if (index == 1)
-        for (int step = 0; step < exportSequence.size(); ++step)
-            exportSequence[step].slideDuration = 0.0f;
     const auto track =
         vstengine::midiexport::buildSequenceTrack(exportSequence, options);
 
@@ -788,8 +618,7 @@ juce::File VstEngineAudioProcessor::createPartMidiFile(const int partIndex)
 
     const auto tempFile =
         juce::File::getSpecialLocation(juce::File::tempDirectory)
-            .getChildFile(index == 0 ? "VST-Engine-Bass.mid"
-                                     : "VST-Engine-Kick.mid");
+            .getChildFile("Vox-Trance-Engine-Bass.mid");
 
     tempFile.deleteFile();
 
@@ -840,6 +669,9 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
         apvts.replaceState(apvtsState);
 
         if (restoredParts) {
+            // Keep old Kick data readable, but never reactivate removed product
+            // content. 7B migration will retain it as unresolved slot state.
+            parts[1].enabled = false;
             syncParametersFromParts();
         } else {
             // PR #18 migration: APVTS routing + legacy Sequence -> Bass Part;
@@ -854,7 +686,6 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
         }
     }
     publishPartSequenceForAudio(0);
-    publishPartSequenceForAudio(1);
 }
 
 void VstEngineAudioProcessor::seedInitialSequence()
@@ -862,11 +693,7 @@ void VstEngineAudioProcessor::seedInitialSequence()
     parts[0].sequence.clear();
     parts[0].sequence.regenerateBySeed(0xD4A4u);
     parts[1].sequence.clear();
-    for (int step : { 0, 4, 8, 12 }) {
-        parts[1].sequence[step].gate = true;
-        parts[1].sequence[step].velocity = 1.0f;
-        parts[1].sequence[step].slideDuration = 0.0f;
-    }
+    parts[1].enabled = false;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
