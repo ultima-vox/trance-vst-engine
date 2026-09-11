@@ -1,67 +1,81 @@
-# Vox Trance Engine
+# Vox Electronic Engine
 
-Generative VST3 workstation for **dark psytrance, psytrance, forest and related electronic music**.
+Modular generative VST3 workstation for **electronic music production in Cubase**.
 
-> The authoritative implementation contract is [issue #11](../../issues/11). The README describes the product and current architecture at a high level; #11 defines checkpoint order, acceptance gates, migration rules and delivery policy.
+Vox Electronic Engine is not trance-only. The core is genre-neutral; musical identity is provided by instrument modules, style/generator profiles and content packs. Trance, psytrance, house, techno, drum & bass, ambient and future electronic styles should be supported without changing the host architecture.
+
+> Product-level source of truth: [issue #10](../../issues/10).  
+> Current implementation contract: [issue #11](../../issues/11).
+
+## Product family
+
+The Vox product line is split by domain:
+
+- **Vox Electronic Engine** — synths, musical instrument modules, generative MIDI/patterns, semantic FX, atmospheres and rack-based electronic-music workflow.
+- **Vox Drum Engine** — future separate drum/percussion workstation using the same architectural philosophy, with drum modules, kits, grooves and role-aware drum generators.
+- **Vox Mastering Engine** — mixing/mastering/analysis workflows, including Kick/Bass low-end analysis.
+
+Kick/drum synthesis and Kick/Bass MATCH are therefore **not part of Vox Electronic Engine current product scope**.
 
 ## Product direction
 
-Vox Trance Engine is one Windows x64 VST3 instance containing a **Kontakt-like internal instrument rack** with explicit, simple multitrack MIDI routing.
+One Windows x64 VST3 instance hosts a **Kontakt-like internal instrument rack** with explicit and simple multitrack MIDI routing.
 
-The target product is not a collection of hardcoded `Part N = Engine X` paths. Each rack slot hosts a generic Instrument instance and can be assigned independently to MIDI CH1-CH16.
+The product is not built around fixed `Part N = Engine X` assignments. Each slot hosts a generic Instrument instance and can be independently assigned to MIDI CH1–CH16.
 
-Initial instrument modules:
+Initial instrument families:
 
 - Bass
 - Acid
 - Lead
 - Semantic FX
-- Atmos
+- Atmos / Texture
 
-**Kick/Drums are not part of the target Vox Trance Engine product.** Kick moves to the future **Vox Trance Drums** product. Kick/Bass mix analysis and matching belong to **Mastering Engine**.
+Future instruments and style/content packs must be addable without rewriting the VST3 shell, Rack, routing, state or preset infrastructure.
 
 ## Delivery policy
 
-The development goal is an **integrated, installable pre-production plug-in**, not a pile of disconnected PRs.
+The development target is a **working integrated pre-production plug-in**, not a collection of disconnected PRs.
 
-PRs/checkpoints exist for CI, review and rollback, but the required handoff after the architecture refactor is one working `Vox Trance Engine.vst3` that can be installed and tested in Cubase.
+PRs/checkpoints exist for CI, review and rollback. The mandatory handoff after the current architecture refactor is one installable `Vox Electronic Engine.vst3` that can be tested in Cubase.
 
-The mandatory pre-production handoff after checkpoints 7A -> 7B.0 -> 7B (and 7C where needed) must include:
+The first pre-production handoff after `7A -> 7B.0 -> 7B -> 7C` must include at minimum:
 
-- generic Rack and RackSlot model;
+- generic Rack / RackSlot model;
 - InstrumentProvider / Registry / Factory / Instance architecture;
 - Bass migrated through the generic Instrument contract;
-- at least one second real instrument module for isolation testing;
-- explicit MIDI CH1-CH16 routing;
+- at least one second real or reference instrument for isolation testing;
+- explicit MIDI CH1–CH16 routing;
 - deliberate Layer mode;
 - key/velocity zones and transpose;
 - state/preset round-trip and migration;
-- Cubase automation/macros;
-- resource budgets and realtime-safe behavior;
+- stable Cubase automation/macros;
+- bounded realtime/resource behavior;
 - missing/incompatible-module handling;
 - installer/package suitable for Cubase validation;
 - green Windows CI.
 
-Manual Cubase acceptance is required where host behavior cannot be proven by unit/integration tests.
+Manual Cubase acceptance remains mandatory where host behavior cannot be proven automatically.
 
 ## Architecture
 
-The host shell must not contain Bass/Acid/Lead-specific routing or DSP branches.
+The VST3 shell must not contain Bass/Acid/Lead-specific DSP or routing branches.
 
 Conceptual dependency direction:
 
 ```text
 core/shared
     -> instrument contracts
-        -> instrument providers/modules
-            -> rack + MIDI routing + state
-                -> VST3 host shell
+        -> providers / registry / factory
+            -> instrument modules
+                -> rack + MIDI/audio routing + state
+                    -> VST3 shell
 ```
 
-Conceptual module model:
+Conceptual product model:
 
 ```text
-Vox Trance Engine.vst3
+Vox Electronic Engine.vst3
 │
 ├─ Core / Shared
 │  ├─ Transport / PPQ sync
@@ -69,11 +83,13 @@ Vox Trance Engine.vst3
 │  ├─ MIDI export
 │  ├─ Preset / State / Migration
 │  ├─ Shared Arp / Gate / Modulation primitives
+│  ├─ Resource / diagnostics infrastructure
 │  └─ GenerationContext
 │
 ├─ Rack
 │  ├─ RackSlot (stable SlotId)
 │  ├─ MIDI Router
+│  ├─ Layer / key / velocity routing
 │  ├─ Mixer / Output routing
 │  └─ Full Rack / Scene state
 │
@@ -90,46 +106,49 @@ Vox Trance Engine.vst3
    └─ ExternalInstrumentProvider
 ```
 
-For 1.0, built-in instruments may remain **statically linked CMake modules inside the VST3**. They are architecturally separated from the core so a future external-module loader can be added at the provider boundary without rewriting Rack, routing, presets, state or the VST3 shell.
+For 1.0, built-in instruments may remain **statically linked CMake modules inside the VST3**. They are architecturally separated so future external modules require a provider/loader subsystem rather than a rewrite of the host.
 
 ## External-module-ready contract
 
-The 1.0 architecture is intentionally prepared for future external instrument packs, without implementing a binary SDK/loader yet.
+The 1.0 architecture is intentionally prepared for future external instrument packs.
 
-Required separation:
+Core rules:
 
-- `InstrumentId` is globally stable and independent from slot index or provider;
-- `SlotId` is stable and independent from display order and MIDI channel;
+- `InstrumentId` is globally durable and independent from provider, slot index or MIDI channel;
+- `SlotId` is stable and independent from display order and channel;
 - provider is a resolution mechanism, not instrument identity;
-- missing/incompatible modules remain explicit unresolved slots; there is no silent fallback to another synth;
-- state and presets use stable IDs plus explicit schema/version metadata;
-- core UI and state logic operate on generic descriptors/capabilities rather than concrete instrument classes;
-- future external ABI must avoid passing JUCE/STL-owned objects across DLL boundaries.
+- missing/incompatible modules remain explicit unresolved slots;
+- there is no silent fallback to another synth;
+- state/presets use stable IDs plus explicit version/schema metadata;
+- the host UI and state logic work through generic descriptors/capabilities;
+- a future DLL ABI must avoid JUCE/STL ownership-sensitive objects across the binary boundary;
+- future loading should use opaque handles, explicit create/destroy, manifests and versioned compatibility metadata.
 
-Future external loading should therefore add discovery/manifest/ABI/signature/loading infrastructure under the provider boundary rather than refactor the rack.
+External binary loading itself is not required for 1.0.
 
 ## Instrument contract
 
 Each instrument module must expose or provide the equivalent of:
 
-- stable InstrumentId, display name and versions;
-- DSP lifecycle: prepare/reset/process/reprepare;
+- stable InstrumentId and display name;
+- instrument / API / state-schema versions;
+- DSP lifecycle: prepare / reset / process / reprepare;
 - parameter descriptors and state contract;
 - Sound preset contract;
-- Pattern/Sequence/Arp preset contract where applicable;
-- instrument-owned style-aware PatternGenerator;
-- Sequence capabilities;
+- Pattern / Sequence / Arp preset contract where applicable;
+- instrument-owned role/style-aware PatternGenerator;
+- supported sequence/capability descriptors;
 - modulation destinations;
 - editor/view-model capabilities;
 - latency and tail behavior;
 - realtime resource bounds;
 - migration support.
 
-Shared mechanisms such as sequence timing, arp/gate primitives, modulation infrastructure and preset/state foundations should be reused. Instrument-specific musical logic remains inside each instrument module.
+Shared mechanisms such as timing, Sequence, Arp/Gate primitives, modulation infrastructure, resources and preset/state foundations should be reused. Instrument-specific musical logic stays inside the instrument module.
 
 ## Rack and MIDI routing
 
-One Vox Trance Engine instance supports up to **16 rack slots** initially.
+One Vox Electronic Engine instance initially supports up to **16 rack slots**.
 
 Each loaded slot has a visible MIDI input assignment:
 
@@ -140,57 +159,70 @@ Adding an instrument automatically selects the next free channel.
 
 Normal Cubase workflow:
 
-1. Insert one Vox Trance Engine instance.
+1. Insert one Vox Electronic Engine instance.
 2. Load instruments into rack slots.
-3. Create Cubase MIDI tracks routed to that VST3 instance.
+3. Create multiple Cubase MIDI tracks routed to that VST3 instance.
 4. Set each MIDI track to the required channel.
-5. CH1-CH16 directly select the corresponding assigned rack slots.
+5. Channel N triggers only slots explicitly assigned to N.
 
-No hidden Port A/B/C/D scheme, MIDI transformer or separate routing utility should be required for ordinary use.
+No hidden Port A/B/C/D workflow, MIDI transformer or separate routing utility should be required for normal use.
 
-Duplicate-channel assignment must never create accidental silent layering. The UI must require an explicit choice such as SWAP / MOVE / LAYER.
+Duplicate-channel assignment must not silently layer. The UI must require an explicit choice such as **SWAP / MOVE / LAYER**.
 
 ### Layer and zone routing
 
-Channel, key zone, velocity zone, transpose and audio output are independent routing dimensions.
+MIDI channel, key range, velocity range, transpose and audio output are independent routing dimensions.
 
-Layered slots may define:
-
-- key range;
-- velocity range;
-- transpose.
-
-Note ownership is bound to the destination `SlotId` so NoteOff reaches the slot that received NoteOn even if channel or zone routing changes while the note is held.
+Note ownership is bound to the exact destination `SlotId`, so NoteOff returns to the slot that received NoteOn even if routing/zones change while the note is held.
 
 ### GUI audition
 
-The on-screen keyboard auditions the currently selected slot directly. Host MIDI remains channel-routed.
+The on-screen keyboard auditions the selected slot directly. Host MIDI remains channel-routed.
 
 CC120/123 and panic behavior must be scoped correctly; global Panic may reset all slots.
 
 ## Automation and parameters
 
-Modular instruments must remain automatable in Cubase without requiring a changing VST3 parameter layout for every future module.
+Modular instruments must remain usable with Cubase automation without unpredictable changes to the VST3 parameter topology.
 
-The architecture therefore includes a stable host-facing parameter/automation contract and per-slot macro/automation mapping. Instrument-internal parameter identity remains separate from slot identity and host parameter identity.
+The architecture therefore includes:
 
-Automation behavior must be deterministic, appropriately smoothed and safe across buffer-size/sample-rate changes.
+- stable global/rack host parameters;
+- bounded per-slot automation/macro endpoints;
+- persistent macro-to-instrument parameter mapping;
+- stable instrument-local parameter identity;
+- parameter smoothing/sample-accurate behavior where required.
 
-## Pattern generation
+Changing instruments must not corrupt unrelated automation lanes or project state.
+
+## Pattern generation and genre packs
 
 Pattern generation belongs to the instrument.
 
-The global generator provides shared `GenerationContext`; each loaded instrument generates role-appropriate musical material using its own grammar and a deterministic sub-seed derived from global seed + stable SlotId + InstrumentId.
+The global generator provides shared `GenerationContext`; each instrument generates role-appropriate musical material using its own grammar and a deterministic sub-seed derived from global seed + stable SlotId + InstrumentId.
+
+Genre specialization belongs in **style/content/generator profiles**, not in the host architecture.
 
 Examples:
 
-- Bass: Rolling Psy, Dark Psy, Offbeat, Triplet, Hi-Tech, Progressive
-- Acid: Classic 303, Psy Acid, Dark Acid, Forest Acid, Hi-Tech Acid, Hypnotic Acid
-- Lead: Dark Psy Lead, Forest Call, Alien Phrase, Metallic Sequence, Hi-Tech Burst, Psy Arp, Hypnotic Lead
-- Semantic FX: transition-aware risers, downlifters, lasers, fills and related events
-- Atmos: long-form evolving texture/event generation rather than a forced 16-step note model
+- Bass: Psy Rolling, House Sub, Techno Bass, DnB Reese and future profiles;
+- Acid: Classic 303, Psy Acid, Techno Acid, Hypnotic Acid;
+- Lead: arp, pluck, stab, FM, wavetable and genre-specific phrase profiles;
+- Semantic FX: transition-aware risers, downlifters, lasers, fills and related events;
+- Atmos: long-form evolving texture/event generation rather than a forced 16-step note model.
 
 Generation must remain **musically constrained**. Randomization is never an excuse for unconstrained noise.
+
+Future content may be distributed as packs, for example:
+
+- Trance / Psy Pack
+- House Pack
+- Techno Pack
+- Drum & Bass Pack
+- Ambient Pack
+- future electronic style packs
+
+A pack may contain presets, patterns, wavetables/resources, generator profiles/grammars, scenes and macro mappings without changing the core architecture.
 
 ## Presets and state
 
@@ -205,51 +237,58 @@ Preset classes are independent:
 
 Changing a Pattern must not silently change Sound, and vice versa, unless a Full Rack/Scene is loaded.
 
-State is versioned and canonical. Persistent state stores configuration, routing, parameters, patterns, presets and module identity. Runtime-only data such as active voices, transient envelope/LFO phases, scratch buffers and meter history is not serialized unless explicitly required.
+State is versioned and canonical. Persistent state stores configuration, routing, parameters, patterns, presets and module identity. Runtime-only data such as active voices, transient envelope/LFO phases, scratch buffers and meter history is not serialized unless explicitly justified.
 
-Loading must be transactional: parse -> validate -> construct -> prepare -> commit. A bad or missing module must not corrupt the rest of the rack.
+Loading must be transactional:
+
+```text
+parse -> validate -> resolve -> construct/prepare -> commit
+```
+
+A bad, missing or incompatible module must not prevent the rest of the rack from restoring.
 
 ## Realtime and resource policy
 
-The audio callback must not perform heap allocation, file I/O, module construction or blocking synchronization.
+The audio callback must not perform heap allocation, file I/O, module construction, blocking locks, GUI work or network operations.
 
-Every instrument/rack subsystem has bounded resource limits for:
+Every instrument/rack subsystem has bounded limits for:
 
 - voices;
 - MIDI/events per block;
 - modulation routes;
 - sequencer/arp/gate activity;
-- scratch/buffer resources.
+- scratch/buffer resources;
+- diagnostics counters.
 
-When a limit is reached, behavior must be deterministic and diagnosable, for example deterministic voice stealing or bounded event rejection. Hangs, unbounded allocation and random failure are not acceptable.
+At limits, behavior must remain deterministic and safe: deterministic voice stealing/rejection, bounded event rejection and diagnostics rather than hangs or allocation spikes.
 
-## Host synchronization and rendering
+## Host synchronization and deterministic rendering
 
 Generated playback remains synchronized to host musical position using PPQ where available.
 
-Realtime playback, Cubase export/bounce/freeze and deterministic generation should produce equivalent musical decisions for the same state and seed. Wall-clock randomness must not influence musical output.
+Realtime playback and Cubase export/bounce/freeze should make equivalent musical decisions for the same state and seed. Wall-clock time, GUI state and uncontrolled global RNG must not affect musical output.
 
 Sample rate, block size, device restart, suspend/resume and offline render are part of the instrument lifecycle contract.
 
-## Pre-production diagnostics
+## Diagnostics and recovery
 
-A local diagnostic/debug view may expose information useful during Cubase validation, such as:
+Pre-production builds may expose local diagnostics such as:
 
 - Slot / Instrument / MIDI channel;
 - last received event/channel;
-- active voice count / budget;
+- active voices / budget;
 - loaded/missing/incompatible module state;
 - state schema/module versions;
 - latency/tail information;
 - resource-budget warnings.
 
-Diagnostics must not add realtime-thread risk.
+One bad slot/module must not take down the entire restored rack. Unresolved slots preserve identity, routing and opaque persistent state so they can recover when the correct module becomes available.
 
 ## Compatibility
 
-Architecture refactors must not accidentally change plug-in identity or break existing Cubase projects.
+Architecture refactors must not accidentally change plugin identity or break existing Cubase projects.
 
-Compatibility-sensitive identity includes, where applicable:
+Compatibility-sensitive identity includes where applicable:
 
 - VST3 class/plugin identity;
 - bundle/company identity;
@@ -257,7 +296,22 @@ Compatibility-sensitive identity includes, where applicable:
 - existing host-visible parameter IDs;
 - supported legacy state/preset migration.
 
-Legacy Kick/Match content must be migrated or rejected explicitly. It must never be silently reinterpreted as Acid/Lead/another instrument.
+Legacy Kick/MATCH state must be migrated, isolated or rejected explicitly. It must never be silently reinterpreted as Bass/Acid/Lead/another current instrument.
+
+## Shared Vox platform direction
+
+Vox Drum Engine should eventually reuse the generic platform concepts proven here:
+
+- provider/module contracts;
+- state/migration;
+- routing primitives;
+- automation/macros;
+- resource system;
+- diagnostics;
+- realtime utilities;
+- reusable UI foundations.
+
+Do **not** prematurely split a separate shared-core repository while this architecture is still moving. First make the generic core clean and reusable inside Vox Electronic Engine. Extract/share only when there are at least two real product consumers.
 
 ## Current checkpoint order
 
@@ -277,7 +331,7 @@ The locked sequence before new synth expansion is:
      reliability, factory content, packaging and final Cubase acceptance
 ```
 
-After 7B.0 the core architecture is considered frozen for 1.0 unless a measured integration defect justifies a contract change.
+After 7B.0 the core host/module contracts are considered frozen for 1.0 unless a demonstrated host-level defect requires change.
 
 ## Build on Windows
 
@@ -295,6 +349,8 @@ cmake --build build --config Release --clean-first --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+The current repository name remains `trance-vst-engine` during the architecture refactor. Repository/target/path renaming should be handled later as a controlled rename pass rather than mixed into the 7B architecture work.
+
 The Windows CI uses the same configure/build/test sequence and produces the VST3 artifact for validation.
 
 For Cubase, the VST3 bundle is installed in the standard system VST3 location, typically:
@@ -303,16 +359,16 @@ For Cubase, the VST3 bundle is installed in the standard system VST3 location, t
 C:\Program Files\Common Files\VST3
 ```
 
-An installer/uninstaller and upgrade path are part of the pre-production pipeline; manual copying is only a development fallback.
+Installer/uninstaller and upgrade/rollback behavior are part of the pre-production pipeline; manual copying is only a development fallback.
 
 ## Quality gates
 
-Every new instrument must pass a common compliance/isolation suite plus instrument-specific DSP tests.
+Every instrument must pass a common compliance/isolation suite plus instrument-specific DSP tests.
 
 Mandatory regression areas include:
 
-- CH1-CH16 isolation and wrong-channel silence;
-- actual sounding-engine identity (wrong synth must never render);
+- CH1–CH16 isolation and wrong-channel silence;
+- actual sounding-engine identity;
 - simultaneous multi-slot playback;
 - Layer/key/velocity routing;
 - scoped CC120/123/Panic;
@@ -326,12 +382,12 @@ Mandatory regression areas include:
 - state/preset round-trip and migration;
 - Cubase host-level smoke after rack/routing/factory changes.
 
-A small non-shipping `ReferenceInstrument`/compliance fixture should be used where useful to prove generic rack/provider behavior independently of Bass/Acid implementation details.
+A small non-shipping `ReferenceInstrument`/compliance fixture should validate generic rack/provider behavior independently of Bass/Acid implementation details.
 
 ## Reference Cubase regression session
 
-A repeatable Cubase session should be maintained as a practical regression fixture with multiple slots/channels, automation, generation, layer/zones and scene restore. Significant architecture changes are validated against this reference session rather than by ad-hoc testing only.
+Maintain a repeatable Cubase regression session with multiple slots/channels, automation, generation, layering/zones and scene restore. Significant architecture changes should be validated against this reference session rather than only through ad-hoc testing.
 
 ## Definition of done
 
-Vox Trance Engine is complete when one installable VST3 instance can host multiple independent synth/FX instrument modules in a rack, each explicitly and visibly assigned to MIDI channels without routing gymnastics, with instrument-specific pattern generation, robust presets/state, deterministic workflows, stable automation, bounded realtime behavior and production-quality Cubase integration.
+Vox Electronic Engine is complete when one installable VST3 instance can host multiple independent synth/FX instrument modules in a rack, each explicitly and visibly assigned to MIDI channels without routing gymnastics, with instrument-specific pattern generation, genre/content packs, robust presets/state, deterministic workflows, stable automation, bounded realtime behavior and production-quality Cubase integration.
