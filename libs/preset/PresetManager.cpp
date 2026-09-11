@@ -163,63 +163,6 @@ static const FactoryPreset factoryPresets[] = {
         { "pitchEnvCurve", 2.2f }, { "outputLevel", 0.9f } } } },
 };
 
-// Factory kick presets (issue #11 PHASE 5): kick engine sound parameters
-// only. Parameter order must match vstengine::core::kickSoundParameterIds.
-// These are real parameter sets for the synthesized kick - no sample
-// libraries and no non-existent functionality.
-struct KickFactoryPreset {
-    const char* name;
-    std::array<FactorySoundParam, 15> params;
-};
-
-static const KickFactoryPreset kickFactoryPresets[] = {
-    { "Psytrance", { {
-        { "kickPitchStart", 18.0f }, { "kickPitchEnd", 0.0f },
-        { "kickPitchDecay", 0.025f }, { "kickPitchCurve", 2.5f },
-        { "kickBodyDecay", 0.12f }, { "kickTail", 0.2f },
-        { "kickClick", 0.55f }, { "kickClickTone", 0.5f },
-        { "kickDrive", 2.0f }, { "kickClip", 1.0f },
-        { "kickTransient", 0.35f }, { "kickSub", 0.45f },
-        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
-        { "kickOutputLevel", 1.0f } } } },
-    { "Dark Psy", { {
-        { "kickPitchStart", 24.0f }, { "kickPitchEnd", -2.0f },
-        { "kickPitchDecay", 0.02f }, { "kickPitchCurve", 3.0f },
-        { "kickBodyDecay", 0.1f }, { "kickTail", 0.15f },
-        { "kickClick", 0.7f }, { "kickClickTone", 0.6f },
-        { "kickDrive", 3.0f }, { "kickClip", 0.9f },
-        { "kickTransient", 0.2f }, { "kickSub", 0.5f },
-        { "kickTune", 35.0f }, { "kickPhase", 0.0f },
-        { "kickOutputLevel", 1.0f } } } },
-    { "Progressive Psy", { {
-        { "kickPitchStart", 10.0f }, { "kickPitchEnd", 0.0f },
-        { "kickPitchDecay", 0.04f }, { "kickPitchCurve", 2.0f },
-        { "kickBodyDecay", 0.22f }, { "kickTail", 0.45f },
-        { "kickClick", 0.35f }, { "kickClickTone", 0.45f },
-        { "kickDrive", 1.5f }, { "kickClip", 1.0f },
-        { "kickTransient", 0.55f }, { "kickSub", 0.6f },
-        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
-        { "kickOutputLevel", 0.95f } } } },
-    { "Hi-Tech", { {
-        { "kickPitchStart", 30.0f }, { "kickPitchEnd", -4.0f },
-        { "kickPitchDecay", 0.018f }, { "kickPitchCurve", 4.0f },
-        { "kickBodyDecay", 0.09f }, { "kickTail", 0.1f },
-        { "kickClick", 0.85f }, { "kickClickTone", 0.7f },
-        { "kickDrive", 4.5f }, { "kickClip", 0.8f },
-        { "kickTransient", 0.1f }, { "kickSub", 0.35f },
-        { "kickTune", 37.0f }, { "kickPhase", 0.0f },
-        { "kickOutputLevel", 1.0f } } } },
-    { "Classic Trance", { {
-        { "kickPitchStart", 14.0f }, { "kickPitchEnd", 0.0f },
-        { "kickPitchDecay", 0.05f }, { "kickPitchCurve", 1.5f },
-        { "kickBodyDecay", 0.3f }, { "kickTail", 0.7f },
-        { "kickClick", 0.3f }, { "kickClickTone", 0.4f },
-        { "kickDrive", 1.2f }, { "kickClip", 1.0f },
-        { "kickTransient", 0.7f }, { "kickSub", 0.65f },
-        { "kickTune", 36.0f }, { "kickPhase", 0.0f },
-        { "kickOutputLevel", 0.9f } } } },
-};
-
 PresetManager::PresetManager(PresetStateStore& stateStore,
                              vstengine::sequence::Sequence& seq,
                              juce::File directory,
@@ -452,8 +395,9 @@ PresetManager::OperationResult PresetManager::saveSoundPreset(
 {
     if (const auto validation = validateName(name); !validation)
         return validation;
-    if (engine != SoundEngine::bass && engine != SoundEngine::kick)
-        return fail(Error::invalidPreset, "sound engine must be Bass or Kick");
+    if (engine != SoundEngine::bass)
+        return fail(Error::wrongEngine,
+                    "Kick content is not active in Vox Electronic Engine");
     const auto previousName = currentPresetName;
     currentPresetName = name;
     juce::XmlElement xml("VstEnginePreset");
@@ -609,9 +553,6 @@ juce::Array<PresetManager::PresetEntry> PresetManager::getPresets() const
     for (const auto& preset : factoryPresets)
         entries.add({ preset.name, PresetSource::factory, PresetKind::sound,
                       SoundEngine::bass, {} });
-    for (const auto& preset : kickFactoryPresets)
-        entries.add({ preset.name, PresetSource::factory, PresetKind::sound,
-                      SoundEngine::kick, {} });
 
     if (!presetDirectory.exists())
         return entries;
@@ -660,6 +601,10 @@ juce::Array<PresetManager::PresetEntry> PresetManager::getPresets() const
             continue;
         if ((engine == EngineType::bass && (!hasBass || hasKick))
             || (engine == EngineType::kick && (!hasKick || hasBass)))
+            continue;
+        // Kick sound files remain on disk for migration/export, but are not
+        // active Vox Electronic Engine content after checkpoint 7A.
+        if (engine == EngineType::kick || engine == EngineType::legacyCombined)
             continue;
         entries.add({ nameEl->getAllSubText(), PresetSource::user,
                       PresetKind::sound, engine, file });
@@ -747,8 +692,6 @@ juce::StringArray PresetManager::getFactoryPresetNames() const {
     juce::StringArray names;
     for (const auto& preset : factoryPresets)
         names.add(preset.name);
-    for (const auto& preset : kickFactoryPresets)
-        names.add(preset.name);
     return names;
 }
 
@@ -758,8 +701,6 @@ juce::StringArray PresetManager::getFactoryPresetNames(
     juce::StringArray names;
     if (engine == EngineType::bass)
         for (const auto& preset : factoryPresets) names.add(preset.name);
-    if (engine == EngineType::kick)
-        for (const auto& preset : kickFactoryPresets) names.add(preset.name);
     return names;
 }
 
@@ -810,16 +751,6 @@ PresetManager::OperationResult PresetManager::loadFactoryPreset(
             ? ok() : fail(Error::invalidPreset, "invalid factory preset");
     }
 
-    if (engine == EngineType::kick) for (const auto& preset : kickFactoryPresets) {
-        if (name != preset.name)
-            continue;
-        const auto xml = buildPresetXml(
-            engine, preset.name, preset.params.data(),
-            static_cast<int>(preset.params.size()));
-        return deserializeFromXml(xml, PresetKind::sound, engine)
-            ? ok() : fail(Error::invalidPreset, "invalid factory preset");
-    }
-
     return fail(Error::fileNotFound, "factory preset not found");
 }
 
@@ -828,8 +759,6 @@ PresetManager::OperationResult PresetManager::loadFactoryPreset(
 {
     for (const auto& preset : factoryPresets)
         if (name == preset.name) return loadFactoryPreset(EngineType::bass, name);
-    for (const auto& preset : kickFactoryPresets)
-        if (name == preset.name) return loadFactoryPreset(EngineType::kick, name);
     return fail(Error::fileNotFound, "factory preset not found");
 }
 
@@ -848,9 +777,6 @@ PresetManager::OperationResult PresetManager::validateName(
 bool PresetManager::isFactoryName(const juce::String& name) const
 {
     for (const auto& preset : factoryPresets)
-        if (name == preset.name)
-            return true;
-    for (const auto& preset : kickFactoryPresets)
         if (name == preset.name)
             return true;
     return false;

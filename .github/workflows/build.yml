@@ -16,7 +16,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build -A x64
+        shell: powershell
+        run: |
+          $nsis = Get-Command makensis -ErrorAction SilentlyContinue
+          $flag = if ($null -ne $nsis) { "ON" } else { "OFF" }
+          cmake -S . -B build -A x64 "-DVOX_ENABLE_NSIS=$flag"
 
       - name: Build
         run: cmake --build build --config Release --clean-first --parallel
@@ -24,9 +28,15 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Upload VST3
+      - name: Package Vox Electronic Engine
+        shell: powershell
+        run: cmake --build build --config Release --target package
+      - name: Upload VST3 and installer
         uses: actions/upload-artifact@v4
         with:
-          name: VST-Engine-Windows-VST3
-          path: build/VstEngine_artefacts/Release/VST3/*.vst3
+          name: Vox-Electronic-Engine-Windows
+          path: |
+            build/VstEngine_artefacts/Release/VST3/Vox Electronic Engine.vst3
+            build/*.exe
+            build/*.zip
           if-no-files-found: error

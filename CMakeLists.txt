@@ -26,6 +26,24 @@ set(VST_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 add_library(vst_core INTERFACE)
 target_include_directories(vst_core INTERFACE ${VST_LIBS_DIR})
 
+# instrument: versioned external-module-ready ABI, provider registry, stable
+# host automation schema, lifecycle and transactional state preparation.
+add_library(vst_instrument STATIC
+  libs/instrument/InstrumentAbi.h
+  libs/instrument/InstrumentContract.h
+  libs/instrument/HostParameterSchema.cpp libs/instrument/HostParameterSchema.h
+  libs/instrument/InstrumentRegistry.cpp libs/instrument/InstrumentRegistry.h
+  libs/instrument/ModuleState.cpp libs/instrument/ModuleState.h)
+target_include_directories(vst_instrument PUBLIC ${VST_LIBS_DIR})
+
+add_library(vst_rack STATIC
+  libs/rack/RackTypes.h
+  libs/rack/RackRouter.cpp libs/rack/RackRouter.h
+  libs/rack/Rack.cpp libs/rack/Rack.h
+  libs/rack/RackState.cpp libs/rack/RackState.h)
+target_include_directories(vst_rack PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_rack PUBLIC vst_instrument juce::juce_data_structures)
+
 # sequence: canonical Sequence/Step/timing model + serialization.
 add_library(vst_sequence STATIC
   libs/sequence/Sequence.cpp libs/sequence/Sequence.h
@@ -65,20 +83,11 @@ target_include_directories(vst_bass PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_bass PUBLIC
   juce::juce_audio_basics juce::juce_audio_processors)
 
-# kick: synthesized kick DSP voice (pitch sweep, body/tail, click, drive,
-# clip, transient, sub layer). Issue #11 PHASE 5.
-add_library(vst_kick STATIC
-  libs/kick/KickSynth.cpp libs/kick/KickSynth.h)
-target_include_directories(vst_kick PUBLIC ${VST_LIBS_DIR})
-target_link_libraries(vst_kick PUBLIC juce::juce_audio_basics)
-
-# match: kick/bass low-end analysis + bounded matching adjustments. Issue
-# #11 PHASE 6. Message-thread only (editor callback / tests), never RT.
-add_library(vst_match STATIC
-  libs/match/KickBassMatch.cpp libs/match/KickBassMatch.h)
-target_include_directories(vst_match PUBLIC ${VST_LIBS_DIR})
-target_link_libraries(vst_match PUBLIC
-  juce::juce_audio_basics juce::juce_audio_processors vst_bass vst_kick)
+add_library(vst_modules STATIC
+  libs/modules/BuiltInProvider.cpp libs/modules/BuiltInProvider.h)
+target_include_directories(vst_modules PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_modules PUBLIC
+  vst_instrument vst_bass juce::juce_audio_basics)
 
 # preset: preset format, filesystem, factory/user distinction, migration.
 add_library(vst_preset STATIC
@@ -99,14 +108,12 @@ add_library(vst_ui STATIC
   libs/ui/MainNavigation.cpp libs/ui/MainNavigation.h
   libs/ui/GlobalHeader.cpp libs/ui/GlobalHeader.h
   libs/ui/BassPanel.cpp libs/ui/BassPanel.h
-  libs/ui/KickPanel.cpp libs/ui/KickPanel.h
   libs/ui/StepSequencer.cpp libs/ui/StepSequencer.h
-  libs/ui/MatchPanel.cpp libs/ui/MatchPanel.h
   libs/ui/PresetBrowser.cpp libs/ui/PresetBrowser.h)
 target_include_directories(vst_ui PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_ui PUBLIC
   juce::juce_gui_basics juce::juce_audio_utils juce::juce_audio_processors
-  vst_sequence vst_parts vst_match vst_preset)
+  vst_sequence vst_parts vst_preset)
 
 # ---------------------------------------------------------------------------
 # VST3 shell: composition + host integration only.
@@ -117,7 +124,7 @@ juce_add_plugin(VstEngine
   PLUGIN_MANUFACTURER_CODE UlVx
   PLUGIN_CODE DkP1
   FORMATS VST3
-  PRODUCT_NAME "VST Engine"
+  PRODUCT_NAME "Vox Electronic Engine"
   IS_SYNTH TRUE
   NEEDS_MIDI_INPUT TRUE
   NEEDS_MIDI_OUTPUT TRUE
@@ -138,11 +145,13 @@ target_compile_definitions(VstEngine PUBLIC
 
 target_link_libraries(VstEngine PRIVATE
   juce::juce_audio_utils juce::juce_dsp
-  vst_core vst_sequence vst_parts vst_transport vst_midi
-  vst_bass vst_kick vst_match vst_preset vst_generator vst_ui)
+  vst_core vst_instrument vst_rack vst_modules vst_sequence vst_parts
+  vst_transport vst_midi vst_preset vst_generator vst_ui)
 
 if(MSVC)
-  target_compile_options(VstEngine PRIVATE /W4 /permissive-)
+  # JUCE's shared-code target emits one PDB. /FS serializes concurrent compiler
+  # writes when Visual Studio builds PluginProcessor and PluginEditor together.
+  target_compile_options(VstEngine PRIVATE /W4 /permissive- /FS)
 else()
   target_compile_options(VstEngine PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -156,6 +165,19 @@ enable_testing()
 add_executable(sequence_tests tests/sequence/SequenceTests.cpp)
 target_link_libraries(sequence_tests PRIVATE vst_sequence)
 add_test(NAME sequence_tests COMMAND sequence_tests)
+
+add_executable(instrument_contract_tests
+  tests/instrument/InstrumentContractTests.cpp)
+target_link_libraries(instrument_contract_tests PRIVATE vst_instrument)
+add_test(NAME instrument_contract_tests COMMAND instrument_contract_tests)
+
+add_executable(rack_router_tests tests/rack/RackRouterTests.cpp)
+target_link_libraries(rack_router_tests PRIVATE vst_rack)
+add_test(NAME rack_router_tests COMMAND rack_router_tests)
+
+add_executable(rack_integration_tests tests/rack/RackIntegrationTests.cpp)
+target_link_libraries(rack_integration_tests PRIVATE vst_rack vst_modules)
+add_test(NAME rack_integration_tests COMMAND rack_integration_tests)
 
 add_executable(transport_sync_tests tests/transport/TransportSyncTests.cpp)
 target_link_libraries(transport_sync_tests PRIVATE vst_transport)
@@ -195,14 +217,6 @@ add_executable(psy_bass_tests tests/bass/PsyBassTests.cpp)
 target_link_libraries(psy_bass_tests PRIVATE vst_bass)
 add_test(NAME psy_bass_tests COMMAND psy_bass_tests)
 
-add_executable(kick_tests tests/kick/KickSynthTests.cpp)
-target_link_libraries(kick_tests PRIVATE vst_kick)
-add_test(NAME kick_tests COMMAND kick_tests)
-
-add_executable(match_tests tests/match/KickBassMatchTests.cpp)
-target_link_libraries(match_tests PRIVATE vst_match)
-add_test(NAME match_tests COMMAND match_tests)
-
 add_executable(preset_tests tests/preset/PresetTests.cpp)
 target_link_libraries(preset_tests PRIVATE vst_preset vst_parts)
 add_test(NAME preset_tests COMMAND preset_tests)
@@ -234,3 +248,23 @@ target_include_directories(part_audio_isolation_tests PRIVATE
   ${juce_SOURCE_DIR}/modules)
 target_link_libraries(part_audio_isolation_tests PRIVATE VstEngine)
 add_test(NAME part_audio_isolation_tests COMMAND part_audio_isolation_tests)
+
+# 7C installable product. Keep VST3 bundle name stable for upgrades; CPack
+# provides NSIS install/uninstall and ZIP artifact for CI/review environments.
+install(DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/VstEngine_artefacts/$<CONFIG>/VST3/Vox Electronic Engine.vst3"
+  DESTINATION "VST3")
+set(CPACK_PACKAGE_NAME "Vox Electronic Engine")
+set(CPACK_PACKAGE_VENDOR "Ultima Vox")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Vox Electronic Engine")
+option(VOX_ENABLE_NSIS "Build Windows NSIS installer (requires makensis)" OFF)
+set(CPACK_GENERATOR "ZIP")
+if(VOX_ENABLE_NSIS)
+  set(CPACK_GENERATOR "NSIS;ZIP")
+endif()
+set(CPACK_NSIS_DISPLAY_NAME "Vox Electronic Engine")
+set(CPACK_NSIS_PACKAGE_NAME "Vox Electronic Engine")
+set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+set(CPACK_NSIS_MODIFY_PATH OFF)
+include(CPack)

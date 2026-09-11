@@ -1,13 +1,11 @@
 #include "PluginProcessor.h"
+#include "instrument/HostParameterSchema.h"
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 
 namespace {
-
 int testsRun = 0;
-int testsPassed = 0;
-
 void require(bool condition, const char* message)
 {
     ++testsRun;
@@ -15,67 +13,44 @@ void require(bool condition, const char* message)
         std::cerr << "FAILED: " << message << '\n';
         std::exit(EXIT_FAILURE);
     }
-    ++testsPassed;
 }
-
-void setPlain(VstEngineAudioProcessor& processor, const char* id, float value)
+void setPlain(VstEngineAudioProcessor& processor, const std::string& id,
+              float value)
 {
     auto* parameter = processor.parameters().getParameter(id);
-    require(parameter != nullptr, id);
+    require(parameter != nullptr, id.c_str());
     parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
 }
-
-double renderHostNote(int channel, bool bassMute = false,
-                      bool kickMute = false, int bassChannel = 1,
-                      int kickChannel = 2)
+double energy(const juce::AudioBuffer<float>& audio)
 {
-    VstEngineAudioProcessor processor;
-    processor.prepareToPlay(48000.0, 512);
-    setPlain(processor, "midiMode", 1.0f); // Piano Roll: generator disabled.
-    setPlain(processor, "midiChannel", static_cast<float>(bassChannel));
-    setPlain(processor, "kickMidiChannel", static_cast<float>(kickChannel));
-    setPlain(processor, "bassMute", bassMute ? 1.0f : 0.0f);
-    setPlain(processor, "kickMute", kickMute ? 1.0f : 0.0f);
-
+    double result = 0.0;
+    for (int channel = 0; channel < audio.getNumChannels(); ++channel)
+        for (int sample = 0; sample < audio.getNumSamples(); ++sample) {
+            const auto value = audio.getSample(channel, sample);
+            require(std::isfinite(value), "render stays finite");
+            result += static_cast<double>(value) * value;
+        }
+    return result;
+}
+double renderHostNote(VstEngineAudioProcessor& processor, int channel,
+                      int note = 36)
+{
     juce::AudioBuffer<float> audio(2, 512);
     juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(channel, 36, 1.0f), 0);
+    midi.addEvent(juce::MidiMessage::noteOn(channel, note, 1.0f), 0);
     processor.processBlock(audio, midi);
-
-    double energy = 0.0;
-    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
-        for (int sample = 0; sample < audio.getNumSamples(); ++sample) {
-            const double value = audio.getSample(ch, sample);
-            energy += value * value;
-        }
-    return energy;
+    return energy(audio);
 }
-
-double renderAudition(bool bass, bool muteDestination)
+double renderAudition(VstEngineAudioProcessor& processor, std::size_t slot)
 {
-    VstEngineAudioProcessor processor;
-    processor.prepareToPlay(48000.0, 512);
-    setPlain(processor, "midiMode", 1.0f);
-    setPlain(processor, bass ? "bassMute" : "kickMute",
-             muteDestination ? 1.0f : 0.0f);
-    setPlain(processor, bass ? "kickMute" : "bassMute", 0.0f);
-
-    auto& keyboard = bass ? processor.bassKeyboardState()
-                          : processor.kickKeyboardState();
-    keyboard.noteOn(1, 36, 1.0f);
+    processor.selectSlot(slot);
+    processor.keyboardState().noteOn(1, 48, 1.0f);
     juce::AudioBuffer<float> audio(2, 512);
     juce::MidiBuffer midi;
     processor.processBlock(audio, midi);
-
-    double energy = 0.0;
-    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
-        for (int sample = 0; sample < audio.getNumSamples(); ++sample) {
-            const double value = audio.getSample(ch, sample);
-            energy += value * value;
-        }
-    return energy;
+    processor.keyboardState().noteOff(1, 48, 1.0f);
+    return energy(audio);
 }
-
 } // namespace
 
 int main()
@@ -84,78 +59,64 @@ int main()
     constexpr double audible = 1.0e-7;
     constexpr double silent = 1.0e-12;
 
-    require(renderHostNote(1, false, true) > audible,
-            "CH1 renders Bass");
-    require(renderHostNote(2, true, false) > audible,
-            "CH2 renders Kick");
-    require(renderHostNote(2, false, true) < silent,
-            "CH2 never leaks to Bass");
-    require(renderHostNote(1, true, false) < silent,
-            "CH1 never leaks to Kick");
-    require(renderHostNote(3) < silent,
-            "unregistered CH3 renders neither Part");
+    auto processor = std::make_unique<VstEngineAudioProcessor>();
+    processor->prepareToPlay(48000.0, 512);
+    setPlain(*processor, "midiMode", 1.0f);
+    for (std::size_t slot = 0; slot < vstengine::instrument::maxSlots; ++slot)
+        for (std::size_t macro = 0;
+             macro < vstengine::instrument::macrosPerSlot; ++macro) {
+            const auto id = vstengine::instrument::hostparams::macroId(slot, macro);
+            const auto* parameter = processor->parameters().getParameter(id);
+            require(parameter != nullptr && parameter->isAutomatable(),
+                    "stable slot macro exposed to host");
+        }
 
-    require(renderHostNote(5, false, true, 5, 9) > audible,
-            "changed Bass CH5 routes Bass");
-    require(renderHostNote(9, true, false, 5, 9) > audible,
-            "changed Kick CH9 routes Kick");
-    require(renderHostNote(1, false, false, 5, 9) < silent,
-            "old Bass channel inactive after reroute");
+    require(renderHostNote(*processor, 1) > audible, "CH1 renders Bass");
+    processor->instrumentRack().reset();
+    require(renderHostNote(*processor, 2, 48) > audible,
+            "CH2 renders independent ReferenceInstrument");
+    processor->instrumentRack().reset();
+    require(renderHostNote(*processor, 3) < silent, "unassigned channel silent");
 
-    require(renderAudition(true, false) > audible,
-            "Bass keyboard auditions Bass");
-    require(renderAudition(true, true) < silent,
-            "Bass keyboard does not audition Kick");
-    require(renderAudition(false, false) > audible,
-            "Kick keyboard auditions Kick");
-    require(renderAudition(false, true) < silent,
-            "Kick keyboard does not audition Bass");
+    setPlain(*processor, "slot01MidiIn", 5.0f);
+    processor->instrumentRack().reset();
+    require(renderHostNote(*processor, 1) < silent, "old Bass channel inactive");
+    processor->instrumentRack().reset();
+    require(renderHostNote(*processor, 5) > audible, "Bass channel configurable");
 
-    VstEngineAudioProcessor saved;
-    setPlain(saved, "midiChannel", 5.0f);
-    setPlain(saved, "kickMidiChannel", 9.0f);
-    setPlain(saved, "bassMute", 1.0f);
-    setPlain(saved, "kickSolo", 1.0f);
-    setPlain(saved, "bassPan", -0.3f);
-    setPlain(saved, "kickLevel", 0.4f);
-    saved.partSequence(0)[3].gate = true;
-    saved.partSequence(0)[3].noteOffset = 7;
-    saved.partSequence(1)[6].gate = true;
-    saved.partSequence(1)[6].velocity = 0.37f;
-    juce::MemoryBlock projectState;
-    saved.getStateInformation(projectState);
+    processor->instrumentRack().reset();
+    require(renderAudition(*processor, 0) > audible,
+            "selected-slot keyboard auditions Bass");
+    setPlain(*processor, "slot01Mute", 1.0f);
+    processor->instrumentRack().reset();
+    require(renderAudition(*processor, 0) < silent, "slot mute blocks audition");
+    setPlain(*processor, "slot01Mute", 0.0f);
 
-    VstEngineAudioProcessor restored;
-    restored.setStateInformation(projectState.getData(),
-                                 static_cast<int>(projectState.getSize()));
-    const auto& restoredParts = restored.partRegistry();
-    require(restoredParts[0].midiChannel == 5 && restoredParts[0].mute,
-            "project state restores Bass routing/mix");
-    require(restoredParts[1].midiChannel == 9 && restoredParts[1].solo,
-            "project state restores Kick routing/mix");
-    require(std::abs(restoredParts[0].pan + 0.3f) < 0.011f
-                && std::abs(restoredParts[1].level - 0.4f) < 0.011f,
-            "project state restores independent level/pan");
-    require(restoredParts[0].sequence[3].gate
-                && restoredParts[0].sequence[3].noteOffset == 7,
-            "project state restores Bass sequence");
-    require(restoredParts[1].sequence[6].gate
-                && std::abs(restoredParts[1].sequence[6].velocity - 0.37f)
-                       < 1.0e-6f,
-            "project state restores Kick sequence");
+    processor->sequence()[3].gate = true;
+    processor->sequence()[3].noteOffset = 7;
+    processor->publishSequenceForAudio();
+    setPlain(*processor, "kickTune", 43.0f);
+    setPlain(*processor, "matchBassTimingOffsetMs", 12.0f);
+    juce::MemoryBlock state;
+    processor->getStateInformation(state);
+    require(state.getSize() > 0, "state serialization succeeds");
 
-    setPlain(restored, "midiChannel", 7.0f);
-    restored.partSequence(0)[3].noteOffset = 11;
-    juce::MemoryBlock resavedState;
-    restored.getStateInformation(resavedState);
-    VstEngineAudioProcessor reopened;
-    reopened.setStateInformation(resavedState.getData(),
-                                 static_cast<int>(resavedState.getSize()));
-    require(reopened.partRegistry()[0].midiChannel == 7
-                && reopened.partSequence(0)[3].noteOffset == 11,
-            "load-edit-save-reopen uses latest Part state");
+    auto restored = std::make_unique<VstEngineAudioProcessor>();
+    restored->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    restored->prepareToPlay(48000.0, 512);
+    setPlain(*restored, "midiMode", 1.0f);
+    require(restored->sequence()[3].gate
+                && restored->sequence()[3].noteOffset == 7,
+            "Bass sequence round-trips");
+    require(std::abs(restored->parameters().getRawParameterValue("kickTune")->load()
+                     - 43.0f) < 0.01f,
+            "dormant Kick value retained for migration");
+    require(std::abs(restored->parameters().getRawParameterValue(
+                         "matchBassTimingOffsetMs")->load() - 12.0f) < 0.01f,
+            "dormant MATCH value retained for migration");
+    require(renderHostNote(*restored, 9) < silent,
+            "legacy Kick parameters never reactivate audio");
 
-    std::cout << "Part audio isolation tests passed (" << testsPassed << "/"
-              << testsRun << ")\n";
+    std::cout << "Plugin Rack integration tests passed (" << testsRun << ")\n";
     return EXIT_SUCCESS;
 }
