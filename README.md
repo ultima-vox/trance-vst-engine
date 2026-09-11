@@ -1,32 +1,283 @@
-# VST Engine
+# Vox Trance Engine
 
-Generative VST3 instrument for **dark psytrance, psytrance, forest and related electronic music**.
+Generative VST3 workstation for **dark psytrance, psytrance, forest and related electronic music**.
 
-## Status
+> The authoritative implementation contract is [issue #11](../../issues/11). The README describes the product and current architecture at a high level; #11 defines checkpoint order, acceptance gates, migration rules and delivery policy.
 
-Early vertical slice (0.1.x). The current target is a reliable VST3 instrument in Cubase before expanding into a larger generative sound-design system.
+## Product direction
 
-### Implemented
+Vox Trance Engine is one Windows x64 VST3 instance containing a **Kontakt-like internal instrument rack** with explicit, simple multitrack MIDI routing.
 
-- JUCE 9.0.1 + CMake project
-- VST3 instrument target for Windows
-- Host-tempo-aware 16-step rolling bass sequencer
-- Deterministic dark-psy pattern generator
-- Dedicated psy-bass synth voice with phase reset and fast pitch envelope
-- Synthesized kick engine (issue #11 Phase 5): pitch sweep, body/tail,
-  click with tone control, drive, clip, transient shaping, sub layer, tune,
-  phase reset and output level - no samples, fully generated
-- Kick factory presets: Psytrance, Dark Psy, Progressive Psy, Hi-Tech,
-  Classic Trance
-- Synthetic kick/bass matching (issue #11 Phase 6): bounded analysis of
-  kick tail/dominant region vs bass onset/dominant region, spectral overlap
-  and phase interaction, with APPLY respecting hard bounds (tail x0.60..x1.00,
-  phase snap 0|180 deg, bass level +/-6 dB, bass timing 0..16 ms)
-- Automatable Drive and Release parameters
-- Plug-in state save/restore
-- Minimal native JUCE editor
-- Pattern generator test
-- GitHub Actions Windows build
+The target product is not a collection of hardcoded `Part N = Engine X` paths. Each rack slot hosts a generic Instrument instance and can be assigned independently to MIDI CH1-CH16.
+
+Initial instrument modules:
+
+- Bass
+- Acid
+- Lead
+- Semantic FX
+- Atmos
+
+**Kick/Drums are not part of the target Vox Trance Engine product.** Kick moves to the future **Vox Trance Drums** product. Kick/Bass mix analysis and matching belong to **Mastering Engine**.
+
+## Delivery policy
+
+The development goal is an **integrated, installable pre-production plug-in**, not a pile of disconnected PRs.
+
+PRs/checkpoints exist for CI, review and rollback, but the required handoff after the architecture refactor is one working `Vox Trance Engine.vst3` that can be installed and tested in Cubase.
+
+The mandatory pre-production handoff after checkpoints 7A -> 7B.0 -> 7B (and 7C where needed) must include:
+
+- generic Rack and RackSlot model;
+- InstrumentProvider / Registry / Factory / Instance architecture;
+- Bass migrated through the generic Instrument contract;
+- at least one second real instrument module for isolation testing;
+- explicit MIDI CH1-CH16 routing;
+- deliberate Layer mode;
+- key/velocity zones and transpose;
+- state/preset round-trip and migration;
+- Cubase automation/macros;
+- resource budgets and realtime-safe behavior;
+- missing/incompatible-module handling;
+- installer/package suitable for Cubase validation;
+- green Windows CI.
+
+Manual Cubase acceptance is required where host behavior cannot be proven by unit/integration tests.
+
+## Architecture
+
+The host shell must not contain Bass/Acid/Lead-specific routing or DSP branches.
+
+Conceptual dependency direction:
+
+```text
+core/shared
+    -> instrument contracts
+        -> instrument providers/modules
+            -> rack + MIDI routing + state
+                -> VST3 host shell
+```
+
+Conceptual module model:
+
+```text
+Vox Trance Engine.vst3
+│
+├─ Core / Shared
+│  ├─ Transport / PPQ sync
+│  ├─ Sequence / Pattern primitives
+│  ├─ MIDI export
+│  ├─ Preset / State / Migration
+│  ├─ Shared Arp / Gate / Modulation primitives
+│  └─ GenerationContext
+│
+├─ Rack
+│  ├─ RackSlot (stable SlotId)
+│  ├─ MIDI Router
+│  ├─ Mixer / Output routing
+│  └─ Full Rack / Scene state
+│
+├─ InstrumentRegistry
+│  └─ InstrumentProvider
+│      └─ BuiltInInstrumentProvider (1.0)
+│          ├─ Bass
+│          ├─ Acid
+│          ├─ Lead
+│          ├─ Semantic FX
+│          └─ Atmos
+│
+└─ future
+   └─ ExternalInstrumentProvider
+```
+
+For 1.0, built-in instruments may remain **statically linked CMake modules inside the VST3**. They are architecturally separated from the core so a future external-module loader can be added at the provider boundary without rewriting Rack, routing, presets, state or the VST3 shell.
+
+## External-module-ready contract
+
+The 1.0 architecture is intentionally prepared for future external instrument packs, without implementing a binary SDK/loader yet.
+
+Required separation:
+
+- `InstrumentId` is globally stable and independent from slot index or provider;
+- `SlotId` is stable and independent from display order and MIDI channel;
+- provider is a resolution mechanism, not instrument identity;
+- missing/incompatible modules remain explicit unresolved slots; there is no silent fallback to another synth;
+- state and presets use stable IDs plus explicit schema/version metadata;
+- core UI and state logic operate on generic descriptors/capabilities rather than concrete instrument classes;
+- future external ABI must avoid passing JUCE/STL-owned objects across DLL boundaries.
+
+Future external loading should therefore add discovery/manifest/ABI/signature/loading infrastructure under the provider boundary rather than refactor the rack.
+
+## Instrument contract
+
+Each instrument module must expose or provide the equivalent of:
+
+- stable InstrumentId, display name and versions;
+- DSP lifecycle: prepare/reset/process/reprepare;
+- parameter descriptors and state contract;
+- Sound preset contract;
+- Pattern/Sequence/Arp preset contract where applicable;
+- instrument-owned style-aware PatternGenerator;
+- Sequence capabilities;
+- modulation destinations;
+- editor/view-model capabilities;
+- latency and tail behavior;
+- realtime resource bounds;
+- migration support.
+
+Shared mechanisms such as sequence timing, arp/gate primitives, modulation infrastructure and preset/state foundations should be reused. Instrument-specific musical logic remains inside each instrument module.
+
+## Rack and MIDI routing
+
+One Vox Trance Engine instance supports up to **16 rack slots** initially.
+
+Each loaded slot has a visible MIDI input assignment:
+
+- CH1 ... CH16
+- OFF
+
+Adding an instrument automatically selects the next free channel.
+
+Normal Cubase workflow:
+
+1. Insert one Vox Trance Engine instance.
+2. Load instruments into rack slots.
+3. Create Cubase MIDI tracks routed to that VST3 instance.
+4. Set each MIDI track to the required channel.
+5. CH1-CH16 directly select the corresponding assigned rack slots.
+
+No hidden Port A/B/C/D scheme, MIDI transformer or separate routing utility should be required for ordinary use.
+
+Duplicate-channel assignment must never create accidental silent layering. The UI must require an explicit choice such as SWAP / MOVE / LAYER.
+
+### Layer and zone routing
+
+Channel, key zone, velocity zone, transpose and audio output are independent routing dimensions.
+
+Layered slots may define:
+
+- key range;
+- velocity range;
+- transpose.
+
+Note ownership is bound to the destination `SlotId` so NoteOff reaches the slot that received NoteOn even if channel or zone routing changes while the note is held.
+
+### GUI audition
+
+The on-screen keyboard auditions the currently selected slot directly. Host MIDI remains channel-routed.
+
+CC120/123 and panic behavior must be scoped correctly; global Panic may reset all slots.
+
+## Automation and parameters
+
+Modular instruments must remain automatable in Cubase without requiring a changing VST3 parameter layout for every future module.
+
+The architecture therefore includes a stable host-facing parameter/automation contract and per-slot macro/automation mapping. Instrument-internal parameter identity remains separate from slot identity and host parameter identity.
+
+Automation behavior must be deterministic, appropriately smoothed and safe across buffer-size/sample-rate changes.
+
+## Pattern generation
+
+Pattern generation belongs to the instrument.
+
+The global generator provides shared `GenerationContext`; each loaded instrument generates role-appropriate musical material using its own grammar and a deterministic sub-seed derived from global seed + stable SlotId + InstrumentId.
+
+Examples:
+
+- Bass: Rolling Psy, Dark Psy, Offbeat, Triplet, Hi-Tech, Progressive
+- Acid: Classic 303, Psy Acid, Dark Acid, Forest Acid, Hi-Tech Acid, Hypnotic Acid
+- Lead: Dark Psy Lead, Forest Call, Alien Phrase, Metallic Sequence, Hi-Tech Burst, Psy Arp, Hypnotic Lead
+- Semantic FX: transition-aware risers, downlifters, lasers, fills and related events
+- Atmos: long-form evolving texture/event generation rather than a forced 16-step note model
+
+Generation must remain **musically constrained**. Randomization is never an excuse for unconstrained noise.
+
+## Presets and state
+
+Preset classes are independent:
+
+- Sound
+- Pattern / Sequence / Arp
+- Modulation
+- Internal FX / chain
+- Generator / Style
+- Full Rack / Scene
+
+Changing a Pattern must not silently change Sound, and vice versa, unless a Full Rack/Scene is loaded.
+
+State is versioned and canonical. Persistent state stores configuration, routing, parameters, patterns, presets and module identity. Runtime-only data such as active voices, transient envelope/LFO phases, scratch buffers and meter history is not serialized unless explicitly required.
+
+Loading must be transactional: parse -> validate -> construct -> prepare -> commit. A bad or missing module must not corrupt the rest of the rack.
+
+## Realtime and resource policy
+
+The audio callback must not perform heap allocation, file I/O, module construction or blocking synchronization.
+
+Every instrument/rack subsystem has bounded resource limits for:
+
+- voices;
+- MIDI/events per block;
+- modulation routes;
+- sequencer/arp/gate activity;
+- scratch/buffer resources.
+
+When a limit is reached, behavior must be deterministic and diagnosable, for example deterministic voice stealing or bounded event rejection. Hangs, unbounded allocation and random failure are not acceptable.
+
+## Host synchronization and rendering
+
+Generated playback remains synchronized to host musical position using PPQ where available.
+
+Realtime playback, Cubase export/bounce/freeze and deterministic generation should produce equivalent musical decisions for the same state and seed. Wall-clock randomness must not influence musical output.
+
+Sample rate, block size, device restart, suspend/resume and offline render are part of the instrument lifecycle contract.
+
+## Pre-production diagnostics
+
+A local diagnostic/debug view may expose information useful during Cubase validation, such as:
+
+- Slot / Instrument / MIDI channel;
+- last received event/channel;
+- active voice count / budget;
+- loaded/missing/incompatible module state;
+- state schema/module versions;
+- latency/tail information;
+- resource-budget warnings.
+
+Diagnostics must not add realtime-thread risk.
+
+## Compatibility
+
+Architecture refactors must not accidentally change plug-in identity or break existing Cubase projects.
+
+Compatibility-sensitive identity includes, where applicable:
+
+- VST3 class/plugin identity;
+- bundle/company identity;
+- manufacturer/plugin codes;
+- existing host-visible parameter IDs;
+- supported legacy state/preset migration.
+
+Legacy Kick/Match content must be migrated or rejected explicitly. It must never be silently reinterpreted as Acid/Lead/another instrument.
+
+## Current checkpoint order
+
+The locked sequence before new synth expansion is:
+
+```text
+7A   Product split: remove active Kick/MATCH paths
+7B.0 Host parameter + module/ABI-ready contract
+7B   Generic Rack / Provider / Registry / MIDI Router
+7C   Early installable pre-production pipeline
+     -> Cubase pre-production handoff
+8    Acid
+9    Lead
+10   Semantic FX
+11   Atmos
+12+  Shared modulation, creative FX, global generation, GUI, performance,
+     reliability, factory content, packaging and final Cubase acceptance
+```
+
+After 7B.0 the core architecture is considered frozen for 1.0 unless a measured integration defect justifies a contract change.
 
 ## Build on Windows
 
@@ -37,182 +288,50 @@ Requirements:
 - Git
 
 ```powershell
-git clone https://github.com/ultima-vox/vst-engine.git
-cd vst-engine
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --parallel
+git clone https://github.com/ultima-vox/trance-vst-engine.git
+cd trance-vst-engine
+cmake -S . -B build -A x64
+cmake --build build --config Release --clean-first --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The VST3 bundle is produced under:
+The Windows CI uses the same configure/build/test sequence and produces the VST3 artifact for validation.
+
+For Cubase, the VST3 bundle is installed in the standard system VST3 location, typically:
 
 ```text
-build/VstEngine_artefacts/Release/VST3/
+C:\Program Files\Common Files\VST3
 ```
 
-For Cubase, copy the resulting .vst3 bundle to the standard system VST3 location, typically:
+An installer/uninstaller and upgrade path are part of the pre-production pipeline; manual copying is only a development fallback.
 
-```text
-C:\\Program Files\\Common Files\\VST3
-```
+## Quality gates
 
-## Architecture direction
+Every new instrument must pass a common compliance/isolation suite plus instrument-specific DSP tests.
 
-Modular architecture per issue #11 (independent CMake targets):
+Mandatory regression areas include:
 
-```text
-apps/vst3/      PluginProcessor (thin VST3/APVTS host adapter), PluginEditor (composition only)
-libs/core/      shared stable IDs/constants          -> vst_core
-libs/sequence/  canonical Sequence/Step/timing model -> vst_sequence
-libs/transport/ pure PPQ/grid musical-time math      -> vst_transport
-libs/midi/      source-mode policy, MIDI export, generated-note scheduler -> vst_midi
-libs/bass/      psy-bass DSP voice                   -> vst_bass
-libs/preset/    preset format/filesystem/migration   -> vst_preset
-libs/generator/ seed-based pattern generation        -> vst_generator
-libs/ui/        reusable JUCE components             -> vst_ui
-tests/          one test executable per module + tests/integration/
-```
+- CH1-CH16 isolation and wrong-channel silence;
+- actual sounding-engine identity (wrong synth must never render);
+- simultaneous multi-slot playback;
+- Layer/key/velocity routing;
+- scoped CC120/123/Panic;
+- GUI keyboard selected-slot audition;
+- preset/state isolation and wrong-engine rejection;
+- instrument replacement without stale DSP;
+- block-boundary routing;
+- generator determinism/isolation;
+- mixer/audio isolation;
+- missing/incompatible module behavior;
+- state/preset round-trip and migration;
+- Cubase host-level smoke after rack/routing/factory changes.
 
-Dependency rule: lower-level modules -> shell. The shell (PluginProcessor/PluginEditor)
-links the module libraries; lower modules never depend on the shell.
+A small non-shipping `ReferenceInstrument`/compliance fixture should be used where useful to prove generic rack/provider behavior independently of Bass/Acid implementation details.
 
-Planned engines:
+## Reference Cubase regression session
 
-1. Psy bass
-2. Kick synthesis
-3. Acid / resonant sequence engine
-4. FM/wavetable dark leads
-5. Forest/alien texture generator
-6. Generative sequencer with probability, ratchets, mutation and scale lock
-7. FX chain and modulation matrix
-8. MIDI-out mode for external instruments
+A repeatable Cubase session should be maintained as a practical regression fixture with multiple slots/channels, automation, generation, layer/zones and scene restore. Significant architecture changes are validated against this reference session rather than by ad-hoc testing only.
 
-## Design rule
+## Definition of done
 
-Generation must remain **musically constrained**. Randomization is not allowed to become unconstrained noise: groove, scale, phrase structure and genre-specific rhythm rules are explicit parts of the generator.
-
-
-## MIDI / Cubase workflow
-
-VST Engine supports four MIDI source modes:
-
-- **AUTO** — if the host sends note events, the piano-roll MIDI is used; otherwise the internal generator is used.
-- **PIANO ROLL** — only incoming host MIDI is used.
-- **GENERATOR** — only VST Engine's generated MIDI is used.
-- **BOTH** — incoming host MIDI and generated MIDI are combined.
-
-The generated stream can be assigned to MIDI channels 1-16. This is the routing foundation for future multitimbral Parts.
-
-### Recording generated MIDI into Cubase
-
-A standard VST3 plug-in does not directly modify an existing Cubase piano-roll part. Generated notes are exposed as VST3 MIDI output so the host can route/record them to a MIDI track. Once recorded, switch VST Engine to **PIANO ROLL** or **AUTO** and edit the notes normally in Cubase.
-
-Planned next step: drag-and-drop MIDI clip export from the plug-in UI into the Cubase project.
-
-
-### Drag generated MIDI into Cubase
-
-The editor exposes **DRAG MIDI TO CUBASE**. Dragging it creates a Standard MIDI File from the current 16-step generator pattern and starts an external file drag operation.
-
-The exported clip uses:
-- the current generator pattern
-- the selected root note
-- the selected generator MIDI channel
-- 960 PPQ resolution
-- 16th-note step spacing
-
-Cubase can then place/import the MIDI clip into the project for normal piano-roll editing.
-
-## Synthesized kick engine (issue #11 Phase 5)
-
-The kick is a fully synthesized one-shot voice (`libs/kick`, no samples):
-
-- **Pitch Start / Pitch End / Pitch Decay / Pitch Curve** - exponential pitch
-  sweep from the attack pitch down to the tuned fundamental.
-- **Body Decay / Tail** - body envelope decay plus a slower sub-layer tail.
-- **Click / Click Tone** - deterministic attack transient; Tone morphs it from
-  bright noise to a tonal thump.
-- **Drive / Clip** - gain-compensated saturation then an optional hard-clip
-  ceiling.
-- **Transient** - attack softness (0 = instant, 1 = soft ramp).
-- **Sub** - sub-octave layer amount.
-- **Tune / Phase / Output Level** - fundamental as a MIDI note, deterministic
-  oscillator start phase, output level.
-
-Routing: the kick listens on its own MIDI channel (**Kick MIDI Channel**,
-default 2 per the fixed Part 2 / CH 2 mapping). Note events on that channel
-play the kick and never reach the bass engine; the piano roll transposes
-relative to C4 while Tune stays the anchor. CC 120/123 fast-fade the tail so
-no note can hang. As a one-shot, the kick ignores ordinary note-off; only
-CC 120/123 received on the configured Kick channel, UI Panic, transport stop,
-or plugin reset use the safety release path. Factory kick presets: Psytrance, Dark Psy, Progressive Psy,
-Hi-Tech, Classic Trance.
-
-## Kick/bass matching (issue #11 Phase 6)
-
-The **MATCH** panel analyzes the real synthesized kick and a real synthesized
-bass note (same DSP the plugin uses) and measures kick tail duration,
-kick/low-end dominant region, bass onset, spectral overlap, phase interaction
-and peak relationship. **APPLY** writes bounded adjustments through APVTS:
-
-- kick tail is trimmed by at most 40% (`x0.60..x1.00`)
-- kick phase snaps to 0 or 180 degrees
-- bass output level is corrected within +/-6 dB
-- Bass Part 1 / MIDI CH 1 note events are delayed by at most 16 ms using a
-  fixed-capacity, sample-accurate cross-block queue; other channels are unchanged
-
-No random parameter movement, no preset switching and no fake "matched"
-state: the exit gate is automated - the unit test material must show a
-measurable reduction in low-end spectral overlap without muting either
-source.
-
-## Editor and presets
-
-Editor uses compact BASS, KICK, SEQ, MATCH, PRESETS and SETTINGS tabs at
-1180x760, resizable from 1040x680 to 1600x1000. PRESETS reads one typed catalog
-from `PresetManager`: factory Bass/Kick presets are read-only; user Bass/Kick
-Sound presets and Full presets support save, load, rename, delete and refresh.
-Files live under JUCE user application data in `UltimaVox/VST-Engine/Presets/User`.
-Preset schema remains v1 and legacy v1 Sound presets remain loadable.
-
-## Host synchronization
-
-Generated playback is synchronized to the host's musical position:
-
-- **PPQ sync (primary).** When the host provides an `AudioPlayHead::PositionInfo`
-  PPQ position (Cubase does), step onsets are scheduled from the absolute
-  quarter-note position against the canonical `stepsPerQuarterNote()` grid.
-  This gives bar-accurate alignment at any start locator, immediate realign on
-  seek/jump, correct wrap on cycle/loop, and musical alignment that survives
-  BPM changes. The alignment math lives in `libs/transport/PpqSync.h` and is
-  unit-tested (`transport_sync_tests`).
-- **Fallback.** If a host does not provide PPQ, playback falls back to the
-  historical BPM-derived free-running step timer (start at step 0, no locator
-  alignment). The timing basis (canonical step durations) is covered by the
-  sync tests; the fallback itself requires a Cubase manual check.
-
-Probability still advances exactly once per sequence step and reseeds on every
-transport restart, so a given project state restarted from the same point
-reproduces the same decisions as MIDI export.
-
-## MIDI source isolation
-
-The generator decision (`libs/midi/SourceSelector.h`, unit-tested by
-`midi_source_tests`) only ever observes **external host notes** and **GUI
-keyboard notes**:
-
-- **AUTO** — host/GUI input wins; the generator runs only when neither is present.
-- **PIANO ROLL** — host/GUI input only.
-- **GENERATOR** — only generated material (incoming host MIDI is dropped).
-- **BOTH** — host/GUI input and generated material are combined.
-
-Internally generated MIDI is never counted as user input. The virtual keyboard
-state deliberately sees only what the user plays on it, so "generated notes
-would highlight the keyboard" can never suppress generator playback in AUTO.
-Consequence: the on-screen keyboard currently highlights only GUI-played keys,
-not Cubase incoming or generated notes; Cubase piano-roll input still plays
-normally.
-
-Host/Cubase-dependent behavior (actual PPQ alignment, locator start, seek,
-loop wrap, AUTO source switching in a real session) must be verified in Cubase
-per the acceptance checklist.
+Vox Trance Engine is complete when one installable VST3 instance can host multiple independent synth/FX instrument modules in a rack, each explicitly and visibly assigned to MIDI channels without routing gymnastics, with instrument-specific pattern generation, robust presets/state, deterministic workflows, stable automation, bounded realtime behavior and production-quality Cubase integration.
