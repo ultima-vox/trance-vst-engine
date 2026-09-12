@@ -95,6 +95,10 @@ juce::ValueTree serialize(
         child.setProperty("modulePayload", payload.toBase64Encoding(), nullptr);
         juce::MemoryBlock pattern(slot.patternPayload.data(), slot.patternPayload.size());
         child.setProperty("patternPayload", pattern.toBase64Encoding(), nullptr);
+        juce::MemoryBlock modulation(slot.modulationPayload.data(),
+                                     slot.modulationPayload.size());
+        child.setProperty("modulationPayload", modulation.toBase64Encoding(),
+                          nullptr);
         root.appendChild(child, nullptr);
     }
     return root;
@@ -249,6 +253,27 @@ bool deserialize(const juce::ValueTree& root,
             if (!slot.patternPayload.empty())
                 std::memcpy(slot.patternPayload.data(), pattern.getData(),
                             pattern.getSize());
+        }
+        if (encodedSchema >= 3) {
+            const auto encodedModulation =
+                child.getProperty("modulationPayload").toString();
+            constexpr auto maxEncodedModulationBytes =
+                4u * ((maxModulationPayloadBytes + 2u) / 3u);
+            if (encodedModulation.getNumBytesAsUTF8()
+                    > static_cast<int>(maxEncodedModulationBytes)) {
+                diagnostic = "rack modulation payload exceeds host budget";
+                return false;
+            }
+            juce::MemoryBlock modulation;
+            if (!modulation.fromBase64Encoding(encodedModulation)
+                || modulation.getSize() > maxModulationPayloadBytes) {
+                diagnostic = "invalid rack modulation payload";
+                return false;
+            }
+            slot.modulationPayload.resize(modulation.getSize());
+            if (!slot.modulationPayload.empty())
+                std::memcpy(slot.modulationPayload.data(), modulation.getData(),
+                            modulation.getSize());
         }
         slot.schemaVersion = schemaVersion;
         if (!valid(slot.routing)

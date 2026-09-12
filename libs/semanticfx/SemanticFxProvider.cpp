@@ -1,0 +1,235 @@
+#include "semanticfx/SemanticFxProvider.h"
+#include "semanticfx/SemanticFxEngine.h"
+#include "semanticfx/SemanticFxGenerator.h"
+#include <algorithm>
+#include <array>
+
+namespace vstengine::semanticfx {
+namespace {
+class SemanticFxInstance final : public instrument::InstrumentInstance {
+public:
+    bool prepare(const instrument::PrepareSpec& spec) override
+    {
+        return engine_.prepare(spec.sampleRate, spec.maximumBlockSize,
+                               spec.outputChannels);
+    }
+    void reset() noexcept override { engine_.reset(); }
+    void suspend() noexcept override { suspended_ = true; engine_.reset(); }
+    void resume() noexcept override { suspended_ = false; }
+    void setBypassed(bool bypassed) noexcept override
+    {
+        if (bypassed && bypassed_ != bypassed) engine_.reset();
+        bypassed_ = bypassed;
+    }
+    void process(const instrument::ProcessBlock& block) noexcept override
+    {
+        if (!bypassed_ && !suspended_)
+            engine_.process(block.outputs, block.sampleCount, block.midi);
+    }
+    bool setParameter(std::string_view id, float value) noexcept override
+    {
+        return engine_.setParameter(id, value);
+    }
+    bool loadState(std::uint32_t schema,
+                   std::span<const std::byte> payload) noexcept override
+    {
+        return engine_.loadState(schema, payload);
+    }
+    bool saveState(std::span<std::byte> destination,
+                   std::uint32_t& written) const noexcept override
+    {
+        return engine_.saveState(destination, written);
+    }
+    std::uint32_t latencySamples() const noexcept override
+    {
+        return engine_.latencySamples();
+    }
+    std::uint32_t tailSamples() const noexcept override
+    {
+        return engine_.tailSamples();
+    }
+private:
+    SemanticFxEngine engine_;
+    bool bypassed_ {};
+    bool suspended_ {};
+};
+
+struct Preset {
+    const char* id;
+    const char* name;
+    SemanticFxProfile profile;
+    std::array<float, SemanticFxEngine::parameterCount> values;
+};
+
+constexpr std::array presets {
+    Preset { "sweep", "Sweep", SemanticFxProfile::sweep,
+        { 0.0f, 0.48f, 0.58f, 0.78f, 0.72f, 0.32f, 0.22f, 0.72f } },
+    Preset { "laser", "Laser", SemanticFxProfile::laser,
+        { 1.0f / 9.0f, 0.58f, 0.25f, 0.82f, 0.84f, 0.18f, 0.42f, 0.66f } },
+    Preset { "riser", "Riser", SemanticFxProfile::riser,
+        { 2.0f / 9.0f, 0.36f, 0.86f, 0.74f, 0.82f, 0.62f, 0.30f, 0.68f } },
+    Preset { "downlifter", "Downlifter", SemanticFxProfile::downlifter,
+        { 3.0f / 9.0f, 0.32f, 0.78f, 0.52f, 0.76f, 0.72f, 0.26f, 0.70f } },
+    Preset { "impact", "Impact", SemanticFxProfile::impact,
+        { 4.0f / 9.0f, 0.25f, 0.58f, 0.42f, 0.68f, 0.54f, 0.55f, 0.78f } },
+    Preset { "whoosh", "Whoosh", SemanticFxProfile::whoosh,
+        { 5.0f / 9.0f, 0.42f, 0.66f, 0.64f, 0.58f, 0.82f, 0.18f, 0.72f } },
+    Preset { "zap", "Zap", SemanticFxProfile::zap,
+        { 6.0f / 9.0f, 0.67f, 0.18f, 0.88f, 0.92f, 0.28f, 0.48f, 0.64f } },
+    Preset { "noise-burst", "Noise Burst", SemanticFxProfile::noiseBurst,
+        { 7.0f / 9.0f, 0.52f, 0.34f, 0.71f, 0.64f, 0.92f, 0.34f, 0.68f } },
+    Preset { "metallic", "Metallic", SemanticFxProfile::metallic,
+        { 8.0f / 9.0f, 0.61f, 0.45f, 0.83f, 0.74f, 0.68f, 0.46f, 0.62f } },
+    Preset { "alien", "Alien", SemanticFxProfile::alien,
+        { 1.0f, 0.44f, 0.72f, 0.66f, 0.94f, 0.86f, 0.40f, 0.66f } }
+};
+
+class SemanticFxProvider final : public instrument::InstrumentProvider {
+public:
+    SemanticFxProvider()
+    {
+        descriptor_.id = std::string(instrumentId);
+        descriptor_.providerId = "com.ultimavox.builtin";
+        descriptor_.name = "Semantic FX";
+        descriptor_.vendor = "Ultima Vox";
+        descriptor_.instrumentVersion = 1;
+        descriptor_.stateVersion = SemanticFxEngine::stateVersion;
+        descriptor_.contentVersion = 1;
+        descriptor_.capabilities = instrument::Capability::notes
+            | instrument::Capability::sequence
+            | instrument::Capability::patternGenerator
+            | instrument::Capability::modulation
+            | instrument::Capability::standardEditor;
+        descriptor_.tailPolicy = instrument::TailPolicy::bounded;
+        descriptor_.budget = { SemanticFxEngine::maximumVoices, 2048, 4096,
+            0, 0, 1728000, 64, 32, 0 };
+        constexpr std::array ids { "family", "tone", "duration", "brightness",
+            "motion", "texture", "drive", "output" };
+        constexpr std::array names { "Event", "Tone", "Duration", "Brightness",
+            "Motion", "Texture", "Drive", "Output" };
+        for (std::size_t index = 0; index < ids.size(); ++index) {
+            const bool isFamily = index == 0;
+            descriptor_.parameters.push_back({ ids[index], names[index], "",
+                0.0f, 1.0f, presets[4].values[index],
+                isFamily ? 1.0f / 9.0f : 0.0001f,
+                isFamily ? instrument::ParameterType::choice
+                         : instrument::ParameterType::floating,
+                index == 7 ? "Output" : "Semantic FX",
+                isFamily ? std::vector<std::string> { "Sweep", "Laser", "Riser",
+                    "Downlifter", "Impact", "Whoosh", "Zap", "Noise Burst",
+                    "Metallic", "Alien" } : std::vector<std::string> {},
+                true, !isFamily, static_cast<std::int8_t>(index) });
+        }
+        for (const auto& preset : presets) {
+            instrument::ContentDescriptor sound { std::string(instrumentId),
+                preset.id, preset.name, instrument::ContentKind::soundPreset,
+                1, 1, VOX_SEQUENCE_GATE | VOX_SEQUENCE_NOTE
+                    | VOX_SEQUENCE_VELOCITY | VOX_SEQUENCE_ACCENT
+                    | VOX_SEQUENCE_PROBABILITY | VOX_SEQUENCE_RATCHET
+                    | VOX_SEQUENCE_GATE_WIDTH,
+                VOX_PRESET_CLASS_SOUND, 0xffu };
+            std::copy(preset.values.begin(), preset.values.end(),
+                      sound.macroValues.begin());
+            content_.push_back(std::move(sound));
+            content_.push_back({ std::string(instrumentId), preset.id,
+                preset.name, instrument::ContentKind::patternPreset, 1, 1,
+                VOX_SEQUENCE_GATE | VOX_SEQUENCE_NOTE | VOX_SEQUENCE_VELOCITY
+                    | VOX_SEQUENCE_ACCENT | VOX_SEQUENCE_PROBABILITY
+                    | VOX_SEQUENCE_RATCHET | VOX_SEQUENCE_GATE_WIDTH,
+                VOX_PRESET_CLASS_PATTERN });
+            content_.push_back({ std::string(instrumentId), preset.id,
+                preset.name, instrument::ContentKind::generatorProfile, 1, 1,
+                VOX_SEQUENCE_GATE | VOX_SEQUENCE_NOTE | VOX_SEQUENCE_VELOCITY
+                    | VOX_SEQUENCE_ACCENT | VOX_SEQUENCE_PROBABILITY
+                    | VOX_SEQUENCE_RATCHET | VOX_SEQUENCE_GATE_WIDTH,
+                VOX_PRESET_CLASS_GENERATOR });
+        }
+    }
+
+    std::span<const instrument::InstrumentDescriptor>
+        descriptors() const noexcept override { return { &descriptor_, 1 }; }
+
+    std::unique_ptr<instrument::InstrumentInstance> create(
+        std::string_view id, const instrument::CreateContext&) override
+    {
+        return id == instrumentId
+            ? std::make_unique<SemanticFxInstance>() : nullptr;
+    }
+
+    std::span<const instrument::ContentDescriptor> contentDescriptors(
+        std::string_view id) const noexcept override
+    {
+        return id == instrumentId
+            ? std::span<const instrument::ContentDescriptor>(content_)
+            : std::span<const instrument::ContentDescriptor> {};
+    }
+
+    instrument::ContentStatus applySoundPreset(
+        std::string_view id, std::string_view presetId,
+        instrument::InstrumentInstance& instance) const noexcept override
+    {
+        if (id != instrumentId) return instrument::ContentStatus::notFound;
+        const auto found = std::find_if(presets.begin(), presets.end(),
+            [presetId](const Preset& preset) { return presetId == preset.id; });
+        if (found == presets.end()) return instrument::ContentStatus::notFound;
+        SemanticFxEngine candidate;
+        for (std::size_t index = 0; index < found->values.size(); ++index)
+            if (!candidate.setParameter(descriptor_.parameters[index].id,
+                                        found->values[index]))
+                return instrument::ContentStatus::invalidArgument;
+        std::array<std::byte, SemanticFxEngine::encodedStateBytes> state {};
+        std::uint32_t written {};
+        if (!candidate.saveState(state, written) || written != state.size())
+            return instrument::ContentStatus::invalidArgument;
+        return instance.loadState(SemanticFxEngine::stateVersion, state)
+            ? instrument::ContentStatus::ok
+            : instrument::ContentStatus::incompatible;
+    }
+
+    instrument::ContentStatus generatePattern(
+        std::string_view id, std::string_view profileId,
+        const VoxGenerationContextV1& context, const VoxPatternV1*,
+        VoxPatternV1& output) const noexcept override
+    {
+        if (id != instrumentId) return instrument::ContentStatus::notFound;
+        if (context.structSize != sizeof(VoxGenerationContextV1)
+            || output.structSize != sizeof(VoxPatternV1))
+            return instrument::ContentStatus::invalidArgument;
+        const auto found = std::find_if(presets.begin(), presets.end(),
+            [profileId](const Preset& preset) { return profileId == preset.id; });
+        if (found == presets.end()) return instrument::ContentStatus::notFound;
+        const auto generated = SemanticFxGenerator::generate(found->profile,
+            context.globalSeed, context.slotId, instrumentId);
+        VoxPatternV1 candidate {};
+        candidate.structSize = sizeof(candidate);
+        candidate.schemaVersion = VOX_PATTERN_SCHEMA_V1;
+        candidate.stepCount = static_cast<std::uint32_t>(generated.size());
+        candidate.timingMode = static_cast<std::uint32_t>(
+            generated.getTimingMode());
+        for (std::uint32_t index = 0; index < candidate.stepCount; ++index) {
+            const auto& source = generated[static_cast<int>(index)];
+            auto& target = candidate.steps[index];
+            target.noteOffset = static_cast<std::int16_t>(source.noteOffset);
+            target.gate = source.gate ? 1 : 0;
+            target.accent = source.accent ? 1 : 0;
+            target.velocity = source.velocity;
+            target.probability = source.probability;
+            target.ratchetCount = static_cast<std::uint8_t>(source.ratchetCount);
+            target.gateWidth = source.gateWidth;
+        }
+        output = candidate;
+        return instrument::ContentStatus::ok;
+    }
+
+private:
+    instrument::InstrumentDescriptor descriptor_;
+    std::vector<instrument::ContentDescriptor> content_;
+};
+} // namespace
+
+std::unique_ptr<instrument::InstrumentProvider> createSemanticFxProvider()
+{
+    return std::make_unique<SemanticFxProvider>();
+}
+
+} // namespace vstengine::semanticfx

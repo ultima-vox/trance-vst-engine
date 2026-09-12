@@ -6,6 +6,22 @@
 
 namespace vstengine::rack {
 namespace {
+constexpr double pi = 3.14159265358979323846;
+
+std::uint32_t nextRandom(std::uint32_t& state) noexcept
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+float randomUnit(std::uint32_t& state) noexcept
+{
+    return static_cast<float>(nextRandom(state) >> 8)
+        * (1.0f / 16777215.0f);
+}
+
 float macroToPlain(float normalized,
                    const instrument::ParameterDescriptor& parameter) noexcept
 {
@@ -69,8 +85,18 @@ void Rack::reset() noexcept
         destination.size = 0;
         destination.dropped = 0;
     }
-    for (auto& slot : runtime_)
+    for (auto& dropped : droppedMidiEvents_)
+        dropped.store(0, std::memory_order_relaxed);
+    for (auto& slot : runtime_) {
         if (slot.instance) slot.instance->reset();
+        if (slot.modulation) {
+            slot.modulation->sources = {};
+            slot.modulation->lfoPhase = {};
+            slot.modulation->randomState =
+                slot.modulation->initialRandomState;
+            slot.modulation->sampleHoldStep = -1;
+        }
+    }
     for (auto& state : runtimeState_) state.ownedNotes = 0;
 }
 
@@ -78,7 +104,9 @@ bool Rack::buildSlot(std::size_t index, const PersistentSlotState& state,
                      instrument::ResourceResolver* resources, SlotRuntime& target,
                      RuntimeSlotState& runtimeState, std::string& diagnostic)
 {
-    if (index >= state_.size() || state.schemaVersion != 2
+    if (index >= state_.size()
+        || state.schemaVersion
+            != static_cast<std::uint32_t>(vstengine::rack::state::schemaVersion)
         || state.slotId == instrument::invalidSlotId || !valid(state.routing)
         || !std::isfinite(state.level) || !std::isfinite(state.pan)
         || state.level < 0.0f || state.level > 2.0f
@@ -134,6 +162,36 @@ bool Rack::buildSlot(std::size_t index, const PersistentSlotState& state,
                 target.instance->setParameter(parameterId,
                     macroToPlain(state.macros[macro], *parameter));
     }
+    if ((target.descriptor->capabilities
+            & instrument::Capability::modulation) != 0) {
+        target.modulation = std::make_unique<ModulationRuntime>();
+        auto& runtime = *target.modulation;
+        if (runtime.registry.add(*target.descriptor)
+                != modulation::RegistryStatus::ok
+            || runtime.matrix.prepare(runtime.registry,
+                target.descriptor->budget.maxModulationRoutes)
+                != modulation::MatrixStatus::ok) {
+            diagnostic = "instrument modulation descriptor invalid";
+            return false;
+        }
+        runtime.randomState ^= static_cast<std::uint32_t>(state.slotId)
+            ^ static_cast<std::uint32_t>(state.slotId >> 32u);
+        runtime.initialRandomState = runtime.randomState;
+        if (!state.modulationPayload.empty()) {
+            modulation::PersistentState persistent;
+            if (modulation::deserializeState(state.modulationPayload, persistent)
+                    != modulation::StateStatus::ok
+                || modulation::restoreState(persistent, runtime.registry,
+                    target.descriptor->budget.maxModulationRoutes,
+                    runtime.matrix) != modulation::StateStatus::ok) {
+                diagnostic = "instrument modulation state invalid";
+                return false;
+            }
+        }
+    } else if (!state.modulationPayload.empty()) {
+        diagnostic = "instrument does not support modulation";
+        return false;
+    }
     return true;
 }
 
@@ -141,6 +199,7 @@ bool Rack::replaceState(
     const std::array<PersistentSlotState, instrument::maxSlots>& replacement,
     instrument::ResourceResolver* resources, std::string& diagnostic)
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     std::array<SlotRuntime, instrument::maxSlots> preparedRuntime;
     std::array<RuntimeSlotState, instrument::maxSlots> preparedState;
     for (std::size_t i = 0; i < replacement.size(); ++i)
@@ -171,6 +230,8 @@ bool Rack::replaceState(
         destination.size = 0;
         destination.dropped = 0;
     }
+    for (auto& dropped : droppedMidiEvents_)
+        dropped.store(0, std::memory_order_relaxed);
     endExclusive();
     return true;
 }
@@ -179,12 +240,14 @@ bool Rack::loadModule(std::size_t index, std::string_view instrumentId,
                       instrument::ResourceResolver* resources,
                       std::string& diagnostic)
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     if (index >= state_.size()) { diagnostic = "slot index out of range"; return false; }
     auto replacement = state_[index];
     replacement.instrumentId = instrumentId;
     replacement.modulePayload.clear();
     replacement.patternSchemaVersion = VOX_PATTERN_SCHEMA_V1;
     replacement.patternPayload.clear();
+    replacement.modulationPayload.clear();
     replacement.resolvedProviderId.clear();
     replacement.instrumentVersion = 0;
     replacement.instrumentStateVersion = instrument::stateSchemaVersion;
@@ -216,6 +279,7 @@ bool Rack::loadModule(std::size_t index, std::string_view instrumentId,
     router_.forgetSlot(state_[index].slotId);
     routed_[index].size = 0;
     routed_[index].dropped = 0;
+    droppedMidiEvents_[index].store(0, std::memory_order_relaxed);
     state_[index] = std::move(replacement);
     if (prepared.descriptor) {
         state_[index].resolvedProviderId = prepared.descriptor->providerId;
@@ -239,6 +303,7 @@ bool Rack::applySoundPreset(std::size_t index, std::string_view presetId,
                             instrument::ResourceResolver* resources,
                             std::string& diagnostic)
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     if (index >= state_.size()) {
         diagnostic = "slot index out of range";
         return false;
@@ -294,6 +359,7 @@ bool Rack::applySoundPreset(std::size_t index, std::string_view presetId,
     runtime_[index] = std::move(prepared);
     runtimeState_[index] = preparedState;
     routed_[index].clear();
+    droppedMidiEvents_[index].store(0, std::memory_order_relaxed);
     endExclusive();
     diagnostic.clear();
     return true;
@@ -303,6 +369,7 @@ bool Rack::updatePatternState(std::size_t index, std::string presetId,
                               std::uint32_t patternSchema,
                               std::vector<std::byte> payload)
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     if (index >= state_.size() || patternSchema == 0
         || payload.size() > state::maxPatternPayloadBytes)
         return false;
@@ -314,8 +381,119 @@ bool Rack::updatePatternState(std::size_t index, std::string presetId,
     return true;
 }
 
+bool Rack::configureModulation(
+    std::size_t index, std::span<const modulation::Route> routes,
+    std::string& diagnostic)
+{
+    const std::scoped_lock persistentLock(persistentStateMutex_);
+    if (index >= runtime_.size() || !runtime_[index].modulation
+        || runtime_[index].descriptor == nullptr) {
+        diagnostic = "slot has no modulation-capable instrument";
+        return false;
+    }
+    auto& modulationRuntime = *runtime_[index].modulation;
+    modulation::ModulationMatrix candidate;
+    if (candidate.prepare(modulationRuntime.registry,
+            runtime_[index].descriptor->budget.maxModulationRoutes)
+            != modulation::MatrixStatus::ok) {
+        diagnostic = "slot modulation budget invalid";
+        return false;
+    }
+    for (const auto& route : routes)
+        if (candidate.addRoute(route) != modulation::MatrixStatus::ok) {
+            diagnostic = "slot modulation route invalid";
+            return false;
+        }
+    modulation::PersistentState persistent;
+    if (modulation::captureState(candidate, modulationRuntime.registry,
+            persistent) != modulation::StateStatus::ok) {
+        diagnostic = "slot modulation state capture failed";
+        return false;
+    }
+    std::vector<std::byte> encoded(
+        modulation::serializedSize(persistent));
+    std::size_t written {};
+    if (encoded.empty()
+        || encoded.size() > state::maxModulationPayloadBytes
+        || modulation::serializeState(persistent, encoded, written)
+            != modulation::StateStatus::ok
+        || written != encoded.size()) {
+        diagnostic = "slot modulation state exceeds host budget";
+        return false;
+    }
+    beginExclusive();
+    modulationRuntime.matrix = candidate;
+    state_[index].modulationPayload = std::move(encoded);
+    endExclusive();
+    diagnostic.clear();
+    return true;
+}
+
+void Rack::applyModulation(
+    SlotRuntime& slot, const PersistentSlotState& persistent,
+    const ProcessSlotControls& controls,
+    const RackRouter::DestinationBuffer& midi,
+    std::uint32_t sampleCount, double sampleRate, double bpm,
+    double ppq) noexcept
+{
+    if (!slot.modulation || slot.descriptor == nullptr || sampleRate <= 0.0)
+        return;
+    auto& runtime = *slot.modulation;
+    runtime.sources.macros = controls.macros;
+    runtime.sources.envelope *= static_cast<float>(
+        std::pow(0.2, static_cast<double>(sampleCount) / sampleRate));
+    for (const auto& event : midi.view()) {
+        const auto status = event.data[0] & 0xf0u;
+        if (status == 0x90u && event.data[2] != 0) {
+            runtime.sources.velocity = static_cast<float>(event.data[2]) / 127.0f;
+            runtime.sources.envelope = 1.0f;
+        } else if (status == 0xb0u && event.data[1] == 1u) {
+            runtime.sources.modWheel = static_cast<float>(event.data[2]) / 127.0f;
+        } else if (status == 0xd0u) {
+            runtime.sources.aftertouch = static_cast<float>(event.data[1]) / 127.0f;
+        }
+    }
+    const auto safeBpm = std::isfinite(bpm) && bpm > 0.0 ? bpm : 120.0;
+    const std::array ratesHz { safeBpm / 240.0, safeBpm / 60.0 };
+    for (std::size_t lfo = 0; lfo < runtime.lfoPhase.size(); ++lfo) {
+        runtime.sources.lfos[lfo] = static_cast<float>(
+            std::sin(2.0 * pi * runtime.lfoPhase[lfo]));
+        runtime.lfoPhase[lfo] = std::fmod(runtime.lfoPhase[lfo]
+            + ratesHz[lfo] * static_cast<double>(sampleCount) / sampleRate,
+            1.0);
+    }
+    const auto step = static_cast<std::int64_t>(
+        std::floor((std::isfinite(ppq) ? ppq : 0.0) * 4.0));
+    runtime.sources.stepMod = static_cast<float>((step % 16 + 16) % 16)
+        / 15.0f;
+    if (step != runtime.sampleHoldStep) {
+        runtime.sampleHoldStep = step;
+        runtime.sources.sampleAndHold = randomUnit(runtime.randomState);
+    }
+    runtime.sources.random = randomUnit(runtime.randomState);
+
+    const auto destinations = runtime.registry.destinations();
+    for (std::size_t index = 0; index < destinations.size(); ++index) {
+        const auto& destination = destinations[index];
+        const auto range = destination.maximum - destination.minimum;
+        runtime.baseNormalized[index] = range > 0.0f
+            ? std::clamp((destination.defaultValue - destination.minimum)
+                / range, 0.0f, 1.0f)
+            : 0.0f;
+        for (std::size_t macro = 0; macro < persistent.macroAssignments.size(); ++macro)
+            if (persistent.macroAssignments[macro] == destination.parameterId)
+                runtime.baseNormalized[index] = controls.macros[macro];
+    }
+    for (const auto& value : runtime.matrix.evaluate(runtime.sources,
+             { runtime.baseNormalized.data(), destinations.size() }))
+        if (const auto* destination = runtime.registry.find(value.key))
+            (void) slot.instance->setParameter(destination->parameterId,
+                                               value.plain);
+}
+
 void Rack::setMacro(std::size_t slot, std::size_t macro, float value) noexcept
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     if (slot >= state_.size() || macro >= instrument::macrosPerSlot
         || !std::isfinite(value)) return;
     value = std::clamp(value, 0.0f, 1.0f);
@@ -331,6 +509,7 @@ void Rack::updateControls(std::size_t slot, Routing routing, bool enabled,
                           bool mute, bool solo, bool locked, float level,
                           float pan) noexcept
 {
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     if (slot >= state_.size() || !valid(routing) || !std::isfinite(level)
         || !std::isfinite(pan)) return;
     state_[slot].routing = routing;
@@ -372,7 +551,8 @@ void Rack::process(std::span<float*> outputs, std::uint32_t sampleCount,
                                      [](const auto& slot) { return slot.solo; });
     for (std::size_t i = 0; i < state_.size(); ++i) {
         auto& slot = runtime_[i];
-        runtimeState_[i].droppedMidiEvents = routed_[i].dropped;
+        droppedMidiEvents_[i].store(routed_[i].dropped,
+                                    std::memory_order_relaxed);
         if (!slot.instance) continue;
         for (std::size_t channel = 0; channel < outputs.size(); ++channel)
             std::fill_n(slot.audio[channel].data(), sampleCount, 0.0f);
@@ -383,6 +563,8 @@ void Rack::process(std::span<float*> outputs, std::uint32_t sampleCount,
                     slot.instance->setParameter(mapped,
                         macroToPlain(controls[i].macros[macro], *parameter));
         }
+        applyModulation(slot, state_[i], controls[i], routed_[i], sampleCount,
+                        spec_.sampleRate, bpm, ppq);
         slot.instance->setBypassed(!controls[i].enabled || controls[i].mute
                                   || (anySolo && !controls[i].solo));
         slot.instance->process({ { slot.pointers.data(), outputs.size() },
@@ -408,7 +590,7 @@ const instrument::InstrumentDescriptor* Rack::descriptor(std::size_t index) cons
 std::array<PersistentSlotState, instrument::maxSlots> Rack::snapshotState(
     std::span<const ProcessSlotControls> controls) const
 {
-    beginExclusive();
+    const std::scoped_lock persistentLock(persistentStateMutex_);
     auto snapshot = state_;
     for (std::size_t index = 0; index < snapshot.size(); ++index) {
         if (controls.size() == snapshot.size()) {
@@ -421,19 +603,19 @@ std::array<PersistentSlotState, instrument::maxSlots> Rack::snapshotState(
             snapshot[index].pan = controls[index].pan;
             snapshot[index].macros = controls[index].macros;
         }
-        const auto& live = runtime_[index];
-        if (!live.instance || !live.descriptor) continue;
-        auto& payload = snapshot[index].modulePayload;
-        payload.resize(live.descriptor->budget.maxStateBytes);
-        std::uint32_t written = 0;
-        if (!live.instance->saveState(payload, written)
-            || written > payload.size()) {
-            payload = state_[index].modulePayload;
-            continue;
-        }
-        payload.resize(written);
+        // Module payload is committed transactionally by module/preset loads.
+        // Live automated values are persisted through macros above. Touching
+        // DSP here would race process() or force host autosave to gate audio.
     }
-    endExclusive();
+    return snapshot;
+}
+
+std::array<RuntimeSlotState, instrument::maxSlots> Rack::runtimeState() const noexcept
+{
+    auto snapshot = runtimeState_;
+    for (std::size_t index = 0; index < snapshot.size(); ++index)
+        snapshot[index].droppedMidiEvents =
+            droppedMidiEvents_[index].load(std::memory_order_relaxed);
     return snapshot;
 }
 

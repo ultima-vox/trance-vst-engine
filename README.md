@@ -15,9 +15,19 @@ Early vertical slice (0.1.x). The current target is a reliable VST3 instrument i
 - Dedicated psy-bass synth voice with phase reset and fast pitch envelope
 - Automatable Drive and Release parameters
 - Plug-in state save/restore
-- Minimal native JUCE editor
-- Pattern generator test
-- GitHub Actions Windows build
+- Generic 16-slot Rack with stable SlotId, CH1-CH16/OFF routing, Layer,
+  key/velocity zones, transpose, mute/solo/lock, level/pan and 16x8 host macros
+- Built-in Bass, Acid, Lead, Semantic FX and Atmos modules through one provider
+  contract; module selector, sound presets and per-slot deterministic patterns
+- Per-slot shared modulation routes with LFO 1/2, Envelope, Step Mod,
+  Sample & Hold, Random, Velocity, mod wheel, aftertouch and canonical restore
+- Post-rack fixed internal FX chain: distortion, wavefolder, phaser, flanger,
+  chorus, bitcrusher, delay and reverb; bypass and Full/project state restore
+- Missing/incompatible module recovery without silent instrument substitution
+- Versioned deterministic Rack/project state and concurrent host-state snapshots
+- Native JUCE editor with selected-slot audition and capability-driven controls
+- 25 automated module, state, routing, realtime-isolation and UI tests
+- Windows x64 VST3 plus plugin-only CPack ZIP; optional NSIS installer
 
 ## Build on Windows
 
@@ -33,12 +43,14 @@ cd vst-engine
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
+cmake --build build --config Release --target package
 ```
 
-The VST3 bundle is produced under:
+VST3 bundle and compact release package are produced under:
 
 ```text
 build/VstEngine_artefacts/Release/VST3/
+build/Vox Electronic Engine-0.1.0-win64.zip
 ```
 
 For Cubase, copy the resulting .vst3 bundle to the standard system VST3 location, typically:
@@ -59,6 +71,12 @@ libs/sequence/  canonical Sequence/Step/timing model -> vst_sequence
 libs/transport/ pure PPQ/grid musical-time math      -> vst_transport
 libs/midi/      source-mode policy, MIDI export, generated-note scheduler -> vst_midi
 libs/bass/      psy-bass DSP voice                   -> vst_bass
+libs/acid/      303-style instrument/generator       -> vst_acid
+libs/lead/      polyphonic wavetable/FM lead          -> vst_lead
+libs/semanticfx/semantic transition instruments      -> vst_semantic_fx
+libs/atmos/     evolving texture instrument           -> vst_atmos
+libs/modulation/shared bounded modulation matrix      -> vst_modulation
+libs/effects/   fixed bounded internal FX chain       -> vst_effects
 libs/preset/    preset format/filesystem/migration   -> vst_preset
 libs/generator/ seed-based pattern generation        -> vst_generator
 libs/ui/        reusable JUCE components             -> vst_ui
@@ -68,14 +86,14 @@ tests/          one test executable per module + tests/integration/
 Dependency rule: lower-level modules -> shell. The shell (PluginProcessor/PluginEditor)
 links the module libraries; lower modules never depend on the shell.
 
-Planned engines:
+Implemented engines:
 
 1. Psy bass
 2. Acid / resonant sequence engine
 3. FM/wavetable dark leads
-4. Forest/alien texture generator
-5. Generative sequencer with probability, ratchets, mutation and scale lock
-6. FX chain and modulation matrix
+4. Semantic FX generator
+5. Forest/alien Atmos texture generator
+6. Fixed internal FX chain and shared modulation matrix
 7. MIDI-out mode for external instruments
 
 ## Design rule

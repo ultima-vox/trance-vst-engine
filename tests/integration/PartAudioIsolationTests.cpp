@@ -1,8 +1,10 @@
 #include "PluginProcessor.h"
 #include "instrument/HostParameterSchema.h"
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace {
 int testsRun = 0;
@@ -95,6 +97,10 @@ int main()
     processor->sequence()[3].gate = true;
     processor->sequence()[3].noteOffset = 7;
     processor->publishSequenceForAudio();
+    require(processor->applyInternalEffectsPreset("psy-drive"),
+            "internal FX preset applies through processor");
+    require(processor->internalEffectsState().effects[0].enabled,
+            "internal distortion becomes active");
     setPlain(*processor, "kickTune", 43.0f);
     setPlain(*processor, "matchBassTimingOffsetMs", 12.0f);
     juce::MemoryBlock state;
@@ -108,6 +114,9 @@ int main()
     require(restored->sequence()[3].gate
                 && restored->sequence()[3].noteOffset == 7,
             "Bass sequence round-trips");
+    require(restored->internalEffectsState().effects[0].enabled
+                && restored->internalEffectsState().effects[0].mix > 0.0f,
+            "internal FX state round-trips");
     require(std::abs(restored->parameters().getRawParameterValue("kickTune")->load()
                      - 43.0f) < 0.01f,
             "dormant Kick value retained for migration");
@@ -116,6 +125,35 @@ int main()
             "dormant MATCH value retained for migration");
     require(renderHostNote(*restored, 9) < silent,
             "legacy Kick parameters never reactivate audio");
+
+    // Cubase may request project state from a non-audio thread while playback
+    // continues. Saving must neither mutate the audio-thread control snapshot
+    // nor make Rack::process return a silent block.
+    setPlain(*restored, "slot01MidiIn", 1.0f);
+    std::atomic<bool> start { false };
+    std::atomic<int> saved { 0 };
+    std::thread saver([&] {
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (int iteration = 0; iteration < 2000; ++iteration) {
+            juce::MemoryBlock snapshot;
+            restored->getStateInformation(snapshot);
+            if (snapshot.getSize() != 0)
+                saved.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    start.store(true, std::memory_order_release);
+    int silentBlocks = 0;
+    for (int iteration = 0; iteration < 2000; ++iteration) {
+        restored->instrumentRack().reset();
+        if (renderHostNote(*restored, 1) <= audible)
+            ++silentBlocks;
+    }
+    saver.join();
+    require(saved.load(std::memory_order_relaxed) == 2000,
+            "concurrent host snapshots remain valid");
+    require(silentBlocks == 0,
+            "concurrent host snapshots never gate realtime audio");
 
     std::cout << "Plugin Rack integration tests passed (" << testsRun << ")\n";
     return EXIT_SUCCESS;

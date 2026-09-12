@@ -60,16 +60,26 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
         presetStore, patternRuntime->slotSequences[0],
         vstengine::PresetManager::FullStateCallbacks {
             [this] {
-                syncRackControlsFromParameters();
-                return vstengine::rack::state::serialize(
-                    snapshotRackWithPatterns());
+                juce::ValueTree extra("ENGINE_EXTRA");
+                extra.addChild(vstengine::rack::state::serialize(
+                    snapshotRackWithPatterns()), -1, nullptr);
+                extra.addChild(captureEffectsState(), -1, nullptr);
+                return extra;
             },
             [this](const juce::ValueTree& state) {
+                const auto rackState = state.hasType("RACK")
+                    ? state : state.getChildWithName("RACK");
                 std::array<vstengine::rack::PersistentSlotState,
                            vstengine::instrument::maxSlots> parsed;
                 std::string diagnostic;
                 if (!vstengine::rack::state::deserialize(
-                        state, parsed, diagnostic))
+                        rackState, parsed, diagnostic))
+                    return false;
+                vstengine::effects::EffectsChain candidateEffects;
+                if (!prepareEffectsState(
+                        state.hasType("RACK") ? juce::ValueTree {}
+                            : state.getChildWithName("EFFECTS"),
+                        candidateEffects))
                     return false;
                 const auto previous = patternRuntime->slotSequences;
                 suspendProcessing(true);
@@ -78,6 +88,7 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
                     return false;
                 }
                 if (rack.replaceState(parsed, nullptr, diagnostic)) {
+                    effectsChain = std::move(candidateEffects);
                     for (auto& scheduler : patternRuntime->schedulers)
                         scheduler.reset(currentSampleRate);
                     suspendProcessing(false);
@@ -97,9 +108,13 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
                                             const int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
+    currentMaximumBlockSize = static_cast<std::uint32_t>(
+        juce::jmax(1, samplesPerBlock));
     (void) rack.prepare({ sampleRate,
-        static_cast<std::uint32_t>(juce::jmax(1, samplesPerBlock)),
+        currentMaximumBlockSize,
         static_cast<std::uint32_t>(juce::jmax(1, getTotalNumOutputChannels())) });
+    (void) effectsChain.prepare(sampleRate, currentMaximumBlockSize,
+        static_cast<std::uint32_t>(juce::jmax(1, getTotalNumOutputChannels())));
     setLatencySamples(static_cast<int>(rack.latencySamples()));
 
     // Reset the generated-playback scheduler and reseed the deterministic
@@ -130,6 +145,7 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
 void VstEngineAudioProcessor::releaseResources()
 {
     rack.reset();
+    effectsChain.reset();
     for (auto& scheduler : patternRuntime->schedulers)
         scheduler.reset(currentSampleRate);
     wasTransportPlaying = false;
@@ -140,6 +156,52 @@ bool VstEngineAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
     const auto output = layouts.getMainOutputChannelSet();
     return output == juce::AudioChannelSet::mono()
         || output == juce::AudioChannelSet::stereo();
+}
+
+bool VstEngineAudioProcessor::applyInternalEffectsPreset(
+    std::string_view presetId) noexcept
+{
+    suspendProcessing(true);
+    const auto applied = effectsChain.applyPreset(presetId);
+    suspendProcessing(false);
+    return applied;
+}
+
+juce::ValueTree VstEngineAudioProcessor::captureEffectsState() const
+{
+    std::array<std::byte, vstengine::effects::EffectsChain::encodedStateBytes>
+        payload {};
+    std::uint32_t written {};
+    if (!effectsChain.saveState(payload, written)
+        || written != payload.size())
+        return {};
+    juce::MemoryBlock bytes(payload.data(), payload.size());
+    juce::ValueTree state("EFFECTS");
+    state.setProperty("schemaVersion",
+        static_cast<int>(vstengine::effects::EffectsChain::stateVersion),
+        nullptr);
+    state.setProperty("payload", bytes.toBase64Encoding(), nullptr);
+    return state;
+}
+
+bool VstEngineAudioProcessor::prepareEffectsState(
+    const juce::ValueTree& state,
+    vstengine::effects::EffectsChain& destination) const
+{
+    if (!destination.prepare(currentSampleRate, currentMaximumBlockSize,
+            static_cast<std::uint32_t>(
+                juce::jmax(1, getTotalNumOutputChannels()))))
+        return false;
+    if (!state.isValid()) return true; // Legacy state predates internal FX.
+    if (!state.hasType("EFFECTS")) return false;
+    const auto schema = static_cast<std::uint32_t>(
+        static_cast<int>(state.getProperty("schemaVersion", 0)));
+    juce::MemoryBlock bytes;
+    if (!bytes.fromBase64Encoding(state.getProperty("payload").toString())
+        || bytes.getSize() != vstengine::effects::EffectsChain::encodedStateBytes)
+        return false;
+    return destination.loadState(schema,
+        { static_cast<const std::byte*>(bytes.getData()), bytes.getSize() });
 }
 
 void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
@@ -400,6 +462,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         { hostEvents.data(), hostCount }, bpm, ppq, playing,
         { auditionEvents.data(), auditionCount }, rackControls[selected].slotId,
         rackControls, generatedStreams);
+    effectsChain.process({ outputs.data(), channels }, blockSamples);
 #endif
 }
 
@@ -488,6 +551,13 @@ void VstEngineAudioProcessor::cacheRackParameterPointers()
 
 void VstEngineAudioProcessor::syncRackControlsFromParameters() noexcept
 {
+    readRackControlsFromParameters(rackControls);
+}
+
+void VstEngineAudioProcessor::readRackControlsFromParameters(
+    std::span<vstengine::rack::ProcessSlotControls> destination) const noexcept
+{
+    if (destination.size() != rackParameterRefs.size()) return;
     for (std::size_t slot = 0; slot < rackParameterRefs.size(); ++slot) {
         const auto& refs = rackParameterRefs[slot];
         const int midiIn = juce::jlimit(0, 16,
@@ -502,7 +572,7 @@ void VstEngineAudioProcessor::syncRackControlsFromParameters() noexcept
         routing.velocityLow = static_cast<std::uint8_t>(refs.velocityLow->load());
         routing.velocityHigh = static_cast<std::uint8_t>(refs.velocityHigh->load());
         routing.transpose = static_cast<std::int8_t>(refs.transpose->load());
-        auto& controls = rackControls[slot];
+        auto& controls = destination[slot];
         controls.routing = routing;
         controls.enabled = refs.enabled->load() >= 0.5f;
         controls.mute = refs.mute->load() >= 0.5f;
@@ -602,7 +672,22 @@ std::array<vstengine::rack::PersistentSlotState,
            vstengine::instrument::maxSlots>
 VstEngineAudioProcessor::snapshotRackWithPatterns()
 {
-    auto snapshot = rack.snapshotState(rackControls);
+    auto snapshot = rack.snapshotState();
+    std::array<vstengine::rack::ProcessSlotControls,
+               vstengine::instrument::maxSlots> controls;
+    for (std::size_t slot = 0; slot < snapshot.size(); ++slot)
+        controls[slot] = vstengine::rack::processControls(snapshot[slot]);
+    readRackControlsFromParameters(controls);
+    for (std::size_t slot = 0; slot < snapshot.size(); ++slot) {
+        snapshot[slot].routing = controls[slot].routing;
+        snapshot[slot].enabled = controls[slot].enabled;
+        snapshot[slot].mute = controls[slot].mute;
+        snapshot[slot].solo = controls[slot].solo;
+        snapshot[slot].locked = controls[slot].locked;
+        snapshot[slot].level = controls[slot].level;
+        snapshot[slot].pan = controls[slot].pan;
+        snapshot[slot].macros = controls[slot].macros;
+    }
     for (std::size_t slot = 0; slot < snapshot.size(); ++slot) {
         const auto* descriptor = rack.descriptor(slot);
         if (descriptor == nullptr
@@ -1135,7 +1220,6 @@ juce::File VstEngineAudioProcessor::createPartMidiFile(const int partIndex)
 
 void VstEngineAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    syncRackControlsFromParameters();
     auto tree = apvts.copyState();
     for (;;) {
         const auto stale = tree.getChildWithName("PARTS");
@@ -1148,9 +1232,15 @@ void VstEngineAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         if (!stale.isValid()) break;
         tree.removeChild(stale, nullptr);
     }
-    tree.setProperty("stateSchemaVersion", 3, nullptr);
+    for (;;) {
+        const auto stale = tree.getChildWithName("EFFECTS");
+        if (!stale.isValid()) break;
+        tree.removeChild(stale, nullptr);
+    }
+    tree.setProperty("stateSchemaVersion", 4, nullptr);
     tree.addChild(vstengine::rack::state::serialize(
         snapshotRackWithPatterns()), -1, nullptr);
+    tree.addChild(captureEffectsState(), -1, nullptr);
     tree.removeProperty("sequenceData", nullptr);
     std::unique_ptr<juce::XmlElement> xml(tree.createXml());
     copyXmlToBinary(*xml, destData);
@@ -1162,6 +1252,9 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
     if (auto xml = getXmlFromBinary(data, sizeInBytes)) {
         auto tree = juce::ValueTree::fromXml(*xml);
         const auto rackTree = tree.getChildWithName("RACK");
+        const auto effectsTree = tree.getChildWithName("EFFECTS");
+        vstengine::effects::EffectsChain candidateEffects;
+        if (!prepareEffectsState(effectsTree, candidateEffects)) return;
         std::array<vstengine::rack::PersistentSlotState,
                    vstengine::instrument::maxSlots> parsedRack;
         std::string rackDiagnostic;
@@ -1191,6 +1284,11 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
             if (!extra.isValid()) break;
             apvtsState.removeChild(extra, nullptr);
         }
+        for (;;) {
+            const auto extra = apvtsState.getChildWithName("EFFECTS");
+            if (!extra.isValid()) break;
+            apvtsState.removeChild(extra, nullptr);
+        }
         const auto previousApvts = apvts.copyState();
         apvts.replaceState(apvtsState);
         if (rackTree.isValid()
@@ -1206,6 +1304,7 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
         if (rackTree.isValid())
             for (std::size_t slot = 0; slot < rackControls.size(); ++slot)
                 rackControls[slot].slotId = parsedRack[slot].slotId;
+        effectsChain = std::move(candidateEffects);
 
         if (!rackTree.isValid() && restoredParts) {
             // Keep old Kick data readable, but never reactivate removed product
