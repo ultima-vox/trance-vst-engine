@@ -5,6 +5,7 @@
 #include "instrument/HostParameterSchema.h"
 #include "modules/BuiltInProvider.h"
 #include "preset/PresetManager.h"
+#include "sequence/PatternAdapter.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -36,11 +37,11 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
                                0, 127, 1, 127, 0 };
     initialRack[0].macros = { 0.48f, 0.55f, 0.4f, 0.25f,
                               0.32f, 0.5f, 0.0f, 0.15f };
-    initialRack[1].instrumentId = vstengine::modules::referenceInstrumentId;
+    initialRack[1].instrumentId = vstengine::modules::acidInstrumentId;
     initialRack[1].routing = { vstengine::rack::RouteMode::channel, 2,
                                0, 127, 1, 127, 0 };
-    initialRack[1].macros = { 0.5f, 0.65f, 0.0f, 0.0f,
-                              0.0f, 0.0f, 0.0f, 0.0f };
+    initialRack[1].macros = { 0.05f, 0.46f, 0.72f, 0.70f,
+                              0.48f, 0.58f, 0.30f, 0.28f };
     (void) rack.replaceState(initialRack, nullptr, diagnostic);
     cacheRackParameterPointers();
     for (std::size_t slot = 0; slot < rackControls.size(); ++slot)
@@ -49,23 +50,45 @@ VstEngineAudioProcessor::VstEngineAudioProcessor()
     // Seed initial sequence with darkPsy pattern (canonical seeded operation
     // owned by the sequence module; same generator stream as before).
     seedInitialSequence();
-    publishPartSequenceForAudio(0);
-    (void) sequenceBridge.read(audioSequence);
+    for (std::size_t slot = 0; slot < patternRuntime->slotSequences.size(); ++slot) {
+        publishPartSequenceForAudio(static_cast<int>(slot));
+        (void) patternRuntime->sequenceBridges[slot].read(
+            patternRuntime->audioSequences[slot]);
+    }
 
     presetManager_ = std::make_unique<vstengine::PresetManager>(
-        presetStore, parts[0].sequence,
+        presetStore, patternRuntime->slotSequences[0],
         vstengine::PresetManager::FullStateCallbacks {
             [this] {
                 syncRackControlsFromParameters();
                 return vstengine::rack::state::serialize(
-                    rack.snapshotState(rackControls));
+                    snapshotRackWithPatterns());
             },
             [this](const juce::ValueTree& state) {
                 std::array<vstengine::rack::PersistentSlotState,
                            vstengine::instrument::maxSlots> parsed;
                 std::string diagnostic;
-                return vstengine::rack::state::deserialize(state, parsed, diagnostic)
-                    && rack.replaceState(parsed, nullptr, diagnostic);
+                if (!vstengine::rack::state::deserialize(
+                        state, parsed, diagnostic))
+                    return false;
+                const auto previous = patternRuntime->slotSequences;
+                suspendProcessing(true);
+                if (!restoreSlotPatterns(parsed, true)) {
+                    suspendProcessing(false);
+                    return false;
+                }
+                if (rack.replaceState(parsed, nullptr, diagnostic)) {
+                    for (auto& scheduler : patternRuntime->schedulers)
+                        scheduler.reset(currentSampleRate);
+                    suspendProcessing(false);
+                    return true;
+                }
+                patternRuntime->slotSequences = previous;
+                for (std::size_t slot = 0;
+                     slot < patternRuntime->slotSequences.size(); ++slot)
+                    publishPartSequenceForAudio(static_cast<int>(slot));
+                suspendProcessing(false);
+                return false;
             }
         });
 }
@@ -85,8 +108,13 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
     // start point.
     const auto globalSeed = static_cast<std::uint32_t>(
         apvts.getRawParameterValue("rngSeed")->load());
-    scheduler.reset(sampleRate);
-    scheduler.reseedProbability(globalSeed ^ 0xB455A11u);
+    for (std::size_t slot = 0; slot < patternRuntime->schedulers.size(); ++slot) {
+        patternRuntime->schedulers[slot].reset(sampleRate);
+        patternRuntime->schedulers[slot].reseedProbability(
+            vstengine::instrument::generationSubSeed(
+                globalSeed, rackControls[slot].slotId,
+                rack.state()[slot].instrumentId));
+    }
 
     // Preallocate the keyboard MIDI scratch buffer using JUCE's intended API.
     // Budget: 4096 bytes covers a dense block of keyboard events (256 events
@@ -94,14 +122,16 @@ void VstEngineAudioProcessor::prepareToPlay(const double sampleRate,
     // then only clears and reuses — no allocation or growth on the realtime
     // thread.
     keyboardScratch.ensureSize(32768);
-    generatedScratch.ensureSize(65536);
+    for (auto& scratch : patternRuntime->generatedScratch)
+        scratch.ensureSize(65536);
     wasTransportPlaying = false;
 }
 
 void VstEngineAudioProcessor::releaseResources()
 {
     rack.reset();
-    scheduler.reset(currentSampleRate);
+    for (auto& scheduler : patternRuntime->schedulers)
+        scheduler.reset(currentSampleRate);
     wasTransportPlaying = false;
 }
 
@@ -265,7 +295,9 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     syncRackControlsFromParameters();
-    (void) sequenceBridge.read(audioSequence);
+    for (std::size_t slot = 0; slot < patternRuntime->audioSequences.size(); ++slot)
+        (void) patternRuntime->sequenceBridges[slot].read(
+            patternRuntime->audioSequences[slot]);
 
     double bpm = 145.0;
     double ppq = 0.0;
@@ -282,7 +314,8 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     if (wasTransportPlaying && !playing) {
         rack.reset();
-        scheduler.reset(currentSampleRate);
+        for (auto& scheduler : patternRuntime->schedulers)
+            scheduler.reset(currentSampleRate);
     }
     wasTransportPlaying = playing;
 
@@ -298,7 +331,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     const bool inputNotes = containsNoteEvents(midi);
     const auto mode = currentMidiMode();
-    generatedScratch.clear();
+    for (auto& scratch : patternRuntime->generatedScratch) scratch.clear();
     if (mode == MidiSourceMode::generator) midi.clear();
     const bool panicThisBlock = panicRequested.exchange(false);
     if (panicThisBlock) {
@@ -306,7 +339,8 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         keyboard.reset();
         keyboardScratch.clear();
         auditionNotes.fill(false);
-        scheduler.reset(currentSampleRate);
+        for (auto& scheduler : patternRuntime->schedulers)
+            scheduler.reset(currentSampleRate);
         rack.reset();
     }
 
@@ -321,21 +355,39 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             static_cast<int>(apvts.getRawParameterValue("rootNote")->load()));
         const auto seed = static_cast<std::uint32_t>(
             apvts.getRawParameterValue("rngSeed")->load());
-        const auto channel = rackControls[0].routing.channel;
-        scheduler.process(generatedScratch, audioSequence, frame,
-                          buffer.getNumSamples(),
-                          currentSampleRate, channel, root, seed ^ 0xB455A11u);
-        scheduler.clearGlideRequests();
+        for (std::size_t slot = 0; slot < patternRuntime->schedulers.size(); ++slot) {
+            const auto* descriptor = rack.descriptor(slot);
+            if (descriptor == nullptr
+                || (descriptor->capabilities
+                    & vstengine::instrument::Capability::sequence) == 0)
+                continue;
+            const auto slotSeed = vstengine::instrument::generationSubSeed(
+                seed, rackControls[slot].slotId, descriptor->id);
+            patternRuntime->schedulers[slot].process(
+                patternRuntime->generatedScratch[slot],
+                patternRuntime->audioSequences[slot],
+                frame, buffer.getNumSamples(), currentSampleRate, 1, root,
+                slotSeed);
+            patternRuntime->schedulers[slot].clearGlideRequests();
+        }
     } else {
-        scheduler.flush(generatedScratch, 0);
+        for (std::size_t slot = 0; slot < patternRuntime->schedulers.size(); ++slot)
+            patternRuntime->schedulers[slot].flush(
+                patternRuntime->generatedScratch[slot], 0);
     }
 
     const auto blockSamples = static_cast<std::uint32_t>(buffer.getNumSamples());
     const auto hostCount = convertMidi(midi, hostEvents, blockSamples);
     const auto auditionCount = convertMidi(keyboardScratch, auditionEvents,
                                            blockSamples);
-    const auto generatedCount = convertMidi(generatedScratch, generatedEvents,
-                                             blockSamples);
+    auto& generatedEvents = generatedRoutingScratch->events;
+    auto& generatedStreams = generatedRoutingScratch->streams;
+    for (std::size_t slot = 0; slot < generatedStreams.size(); ++slot) {
+        const auto count = convertMidi(patternRuntime->generatedScratch[slot],
+                                       generatedEvents[slot], blockSamples);
+        generatedStreams[slot] = { rackControls[slot].slotId,
+            { generatedEvents[slot].data(), count } };
+    }
     std::array<float*, 2> outputs {
         buffer.getWritePointer(0),
         buffer.getNumChannels() > 1 ? buffer.getWritePointer(1)
@@ -347,7 +399,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         static_cast<std::uint32_t>(buffer.getNumSamples()),
         { hostEvents.data(), hostCount }, bpm, ppq, playing,
         { auditionEvents.data(), auditionCount }, rackControls[selected].slotId,
-        rackControls, { generatedEvents.data(), generatedCount });
+        rackControls, generatedStreams);
 #endif
 }
 
@@ -540,8 +592,57 @@ void VstEngineAudioProcessor::syncParametersFromParts()
 
 void VstEngineAudioProcessor::publishPartSequenceForAudio(const int partIndex) noexcept
 {
-    if (partIndex == 0)
-        sequenceBridge.publish(parts[0].sequence);
+    if (partIndex >= 0
+        && partIndex < static_cast<int>(patternRuntime->sequenceBridges.size()))
+        patternRuntime->sequenceBridges[static_cast<std::size_t>(partIndex)].publish(
+            patternRuntime->slotSequences[static_cast<std::size_t>(partIndex)]);
+}
+
+std::array<vstengine::rack::PersistentSlotState,
+           vstengine::instrument::maxSlots>
+VstEngineAudioProcessor::snapshotRackWithPatterns()
+{
+    auto snapshot = rack.snapshotState(rackControls);
+    for (std::size_t slot = 0; slot < snapshot.size(); ++slot) {
+        const auto* descriptor = rack.descriptor(slot);
+        if (descriptor == nullptr
+            || (descriptor->capabilities
+                & vstengine::instrument::Capability::sequence) == 0)
+            continue; // Preserve missing/incompatible module opaque pattern.
+        snapshot[slot].patternSchemaVersion = VOX_PATTERN_SCHEMA_V1;
+        (void) vstengine::sequence::encodePattern(
+            vstengine::sequence::toPattern(patternRuntime->slotSequences[slot]),
+            snapshot[slot].patternPayload);
+    }
+    return snapshot;
+}
+
+bool VstEngineAudioProcessor::restoreSlotPatterns(
+    const std::array<vstengine::rack::PersistentSlotState,
+                     vstengine::instrument::maxSlots>& state,
+    const bool allowEmpty) noexcept
+{
+    auto candidate = patternRuntime->slotSequences;
+    for (std::size_t slot = 0; slot < state.size(); ++slot) {
+        if (state[slot].patternPayload.empty()) {
+            if (!allowEmpty) return false;
+            candidate[slot].clear();
+            continue;
+        }
+        if (state[slot].patternSchemaVersion != VOX_PATTERN_SCHEMA_V1) {
+            candidate[slot].clear();
+            continue; // Rack preserves opaque bytes and marks slot unresolved.
+        }
+        VoxPatternV1 pattern {};
+        if (!vstengine::sequence::decodePattern(state[slot].patternPayload,
+                                                pattern)
+            || !vstengine::sequence::fromPattern(pattern, candidate[slot]))
+            return false;
+    }
+    patternRuntime->slotSequences = std::move(candidate);
+    for (std::size_t slot = 0; slot < patternRuntime->slotSequences.size(); ++slot)
+        publishPartSequenceForAudio(static_cast<int>(slot));
+    return true;
 }
 
 VstEngineAudioProcessor::MidiSourceMode
@@ -835,9 +936,100 @@ bool VstEngineAudioProcessor::loadSlotInstrument(
     suspendProcessing(true);
     std::string detail;
     const bool accepted = rack.loadModule(slot, instrumentId, nullptr, detail);
+    if (accepted) {
+        patternRuntime->slotSequences[slot].clear();
+        publishPartSequenceForAudio(static_cast<int>(slot));
+        patternRuntime->schedulers[slot].reset(currentSampleRate);
+    }
     suspendProcessing(false);
     diagnostic = detail;
     return accepted;
+}
+
+std::span<const vstengine::instrument::ContentDescriptor>
+VstEngineAudioProcessor::selectedContent() const noexcept
+{
+    const auto index = selectedSlotIndex();
+    const auto& state = rack.state()[index];
+    const auto resolution = instrumentRegistry.resolve(state.instrumentId);
+    return resolution && resolution.provider != nullptr
+        ? resolution.provider->contentDescriptors(state.instrumentId)
+        : std::span<const vstengine::instrument::ContentDescriptor> {};
+}
+
+std::uint32_t VstEngineAudioProcessor::selectedSequenceFieldMask() const noexcept
+{
+    std::uint32_t fields {};
+    for (const auto& content : selectedContent())
+        fields |= content.supportedSequenceFields;
+    // Legacy built-in Bass predates content descriptors but supports full
+    // canonical Sequence model.
+    return fields == 0 ? VOX_SEQUENCE_ALL : fields & VOX_SEQUENCE_ALL;
+}
+
+bool VstEngineAudioProcessor::applySelectedSoundPreset(
+    std::string_view presetId, juce::String& diagnostic)
+{
+    const auto index = selectedSlotIndex();
+    suspendProcessing(true);
+    std::string detail;
+    const bool accepted = rack.applySoundPreset(index, presetId, nullptr, detail);
+    if (accepted) {
+        const auto& values = rack.state()[index].macros;
+        for (std::size_t macro = 0; macro < values.size(); ++macro)
+            if (auto* parameter = apvts.getParameter(
+                    vstengine::instrument::hostparams::macroId(index, macro).c_str()))
+                parameter->setValueNotifyingHost(values[macro]);
+    }
+    suspendProcessing(false);
+    diagnostic = detail;
+    return accepted;
+}
+
+bool VstEngineAudioProcessor::generateSelectedPattern(
+    std::string_view profileId, juce::String& diagnostic)
+{
+    const auto index = selectedSlotIndex();
+    const auto& slot = rack.state()[index];
+    const auto resolution = instrumentRegistry.resolve(slot.instrumentId);
+    if (!resolution || resolution.provider == nullptr) {
+        diagnostic = resolution.diagnostic;
+        return false;
+    }
+    suspendProcessing(true);
+    VoxGenerationContextV1 context {};
+    context.structSize = sizeof(context);
+    context.globalSeed = static_cast<std::uint32_t>(
+        apvts.getRawParameterValue("rngSeed")->load());
+    context.slotId = slot.slotId;
+    std::snprintf(context.instrumentId.bytes, sizeof(context.instrumentId.bytes),
+                  "%s", slot.instrumentId.c_str());
+    std::snprintf(context.styleId.bytes, sizeof(context.styleId.bytes), "%.*s",
+                  static_cast<int>(profileId.size()), profileId.data());
+    context.rootNote = static_cast<std::int32_t>(
+        apvts.getRawParameterValue("rootNote")->load());
+    context.bpm = 145.0;
+    VoxPatternV1 pattern { sizeof(VoxPatternV1) };
+    const auto status = resolution.provider->generatePattern(
+        slot.instrumentId, profileId, context, nullptr, pattern);
+    vstengine::sequence::Sequence candidate;
+    std::vector<std::byte> encoded;
+    if (status != vstengine::instrument::ContentStatus::ok
+        || !vstengine::sequence::fromPattern(pattern, candidate)
+        || !vstengine::sequence::encodePattern(pattern, encoded)
+        || !rack.updatePatternState(index, std::string(profileId),
+                                    VOX_PATTERN_SCHEMA_V1,
+                                    std::move(encoded))) {
+        suspendProcessing(false);
+        diagnostic = "pattern generation failed";
+        return false;
+    }
+    patternRuntime->slotSequences[index] = std::move(candidate);
+    publishPartSequenceForAudio(static_cast<int>(index));
+    patternRuntime->schedulers[index].reset(currentSampleRate);
+    suspendProcessing(false);
+    diagnostic.clear();
+    return true;
 }
 
 int VstEngineAudioProcessor::nextFreeChannel() const noexcept
@@ -958,10 +1150,8 @@ void VstEngineAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     }
     tree.setProperty("stateSchemaVersion", 3, nullptr);
     tree.addChild(vstengine::rack::state::serialize(
-        rack.snapshotState(rackControls)), -1, nullptr);
-    juce::MemoryBlock sequenceData;
-    parts[0].sequence.serialize(sequenceData);
-    tree.setProperty("sequenceData", sequenceData.toBase64Encoding(), nullptr);
+        snapshotRackWithPatterns()), -1, nullptr);
+    tree.removeProperty("sequenceData", nullptr);
     std::unique_ptr<juce::XmlElement> xml(tree.createXml());
     copyXmlToBinary(*xml, destData);
 }
@@ -979,6 +1169,12 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
             if (!vstengine::rack::state::deserialize(
                     rackTree, parsedRack, rackDiagnostic))
                 return;
+        }
+        const auto previousSequences = patternRuntime->slotSequences;
+        suspendProcessing(true);
+        if (rackTree.isValid() && !restoreSlotPatterns(parsedRack, true)) {
+            suspendProcessing(false);
+            return;
         }
         const auto partState = tree.getChildWithName("PARTS");
         const bool restoredParts =
@@ -1000,6 +1196,11 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
         if (rackTree.isValid()
             && !rack.replaceState(parsedRack, nullptr, rackDiagnostic)) {
             apvts.replaceState(previousApvts);
+            patternRuntime->slotSequences = previousSequences;
+            for (std::size_t slot = 0;
+                 slot < patternRuntime->slotSequences.size(); ++slot)
+                publishPartSequenceForAudio(static_cast<int>(slot));
+            suspendProcessing(false);
             return;
         }
         if (rackTree.isValid())
@@ -1065,21 +1266,44 @@ void VstEngineAudioProcessor::setStateInformation(const void* data,
             // Kick keeps canonical defaults and independent empty sequence.
             syncPartControlsFromParameters(parts);
         }
-        const auto seqBase64 = tree.getProperty("sequenceData").toString();
-        juce::MemoryBlock sequenceData;
-        if (sequenceData.fromBase64Encoding(seqBase64)
-            && vstengine::sequence::Sequence::isValidSerialization(sequenceData))
-            parts[0].sequence =
-                vstengine::sequence::Sequence::deserialize(sequenceData);
+        if (!rackTree.isValid()
+            || static_cast<int>(rackTree.getProperty("schemaVersion", 1)) == 1) {
+            const auto seqBase64 = tree.getProperty("sequenceData").toString();
+            juce::MemoryBlock sequenceData;
+            if (sequenceData.fromBase64Encoding(seqBase64)
+                && vstengine::sequence::Sequence::isValidSerialization(sequenceData))
+                patternRuntime->slotSequences[0] =
+                    vstengine::sequence::Sequence::deserialize(sequenceData);
+        }
     }
-    publishPartSequenceForAudio(0);
+    for (std::size_t slot = 0; slot < patternRuntime->slotSequences.size(); ++slot)
+        publishPartSequenceForAudio(static_cast<int>(slot));
+    for (auto& scheduler : patternRuntime->schedulers)
+        scheduler.reset(currentSampleRate);
+    suspendProcessing(false);
 }
 
 void VstEngineAudioProcessor::seedInitialSequence()
 {
-    parts[0].sequence.clear();
-    parts[0].sequence.regenerateBySeed(0xD4A4u);
-    parts[1].sequence.clear();
+    for (auto& sequence : patternRuntime->slotSequences) sequence.clear();
+    patternRuntime->slotSequences[0].regenerateBySeed(0xD4A4u);
+    const auto acid = instrumentRegistry.resolve(
+        vstengine::modules::acidInstrumentId);
+    if (acid && acid.provider != nullptr) {
+        VoxGenerationContextV1 context {};
+        context.structSize = sizeof(context);
+        context.globalSeed = 1234;
+        context.slotId = rack.state()[1].slotId;
+        std::snprintf(context.instrumentId.bytes,
+                      sizeof(context.instrumentId.bytes), "%s",
+                      vstengine::modules::acidInstrumentId.data());
+        VoxPatternV1 pattern { sizeof(VoxPatternV1) };
+        if (acid.provider->generatePattern(vstengine::modules::acidInstrumentId,
+                "psy-acid", context, nullptr, pattern)
+                == vstengine::instrument::ContentStatus::ok)
+            (void) vstengine::sequence::fromPattern(
+                pattern, patternRuntime->slotSequences[1]);
+    }
     parts[1].enabled = false;
 }
 

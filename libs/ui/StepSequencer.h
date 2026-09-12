@@ -19,6 +19,7 @@ public:
     };
     enum class Lane { note, gate, velocity, accent, probability, ratchet, slide, count };
     explicit StepSequencer (vstengine::sequence::Sequence&, Callbacks* = nullptr);
+    void setSequence(vstengine::sequence::Sequence&) noexcept;
     void paint (juce::Graphics&) override; void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -29,7 +30,7 @@ public:
     void refreshFromModel();
     [[nodiscard]] Lane getLane() const noexcept { return lane; }
 private:
-    vstengine::sequence::Sequence& sequence;
+    vstengine::sequence::Sequence* sequence {};
     Callbacks* callbacks {};
     juce::ComboBox lengthBox, timingBox;
     std::array<juce::TextButton, static_cast<size_t> (Lane::count)> laneButtons;

@@ -36,7 +36,7 @@ private:
         void applyChannel(VstEngineAudioProcessor::ChannelConflictAction);
         VstEngineAudioProcessor& processor;
         std::array<juce::TextButton, vstengine::instrument::maxSlots> slots;
-        juce::ComboBox instrument, midiIn;
+        juce::ComboBox instrument, midiIn, soundPreset, patternProfile;
         juce::TextButton swap { "SWAP" }, move { "MOVE" }, layerAction { "LAYER" };
         juce::ToggleButton layer { "Layer" }, enabled { "Enabled" },
             mute { "Mute" }, solo { "Solo" }, locked { "Lock" };
@@ -50,6 +50,7 @@ private:
             sliderAttachments;
         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
             buttonAttachments;
+        std::vector<std::string> soundPresetIds, patternProfileIds;
         std::size_t selected {};
         int pendingChannel {};
     };

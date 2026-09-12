@@ -14,10 +14,15 @@ public:
         std::uint64_t dropped {};
         void clear() noexcept { size = 0; }
         bool push(VoxMidiEventV1 event) noexcept;
+        void sortBySampleOffset() noexcept;
         std::span<const VoxMidiEventV1> view() const noexcept
         {
             return { events.data(), size };
         }
+    };
+    struct GeneratedSlotEvents {
+        instrument::SlotId slotId { instrument::invalidSlotId };
+        std::span<const VoxMidiEventV1> events;
     };
 
     void reset() noexcept;
@@ -32,6 +37,10 @@ public:
                        std::array<DestinationBuffer, instrument::maxSlots>& output,
                        bool generated = false)
         noexcept;
+    void routeGenerated(std::span<const GeneratedSlotEvents> input,
+                        std::span<const ProcessSlotControls> slots,
+                        std::array<DestinationBuffer, instrument::maxSlots>& output)
+        noexcept;
 
 private:
     struct Owner {
@@ -44,7 +53,11 @@ private:
     };
     std::array<std::array<Owners, 128>, 16> ownership_ {};
     std::array<Owner, 128> auditionOwnership_ {};
-    std::array<Owner, 128> generatedOwnership_ {};
+    struct GeneratedDomain {
+        instrument::SlotId sourceSlotId { instrument::invalidSlotId };
+        std::array<Owner, 128> notes {};
+    };
+    std::array<GeneratedDomain, instrument::maxSlots> generatedOwnership_ {};
 };
 
 } // namespace vstengine::rack

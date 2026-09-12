@@ -47,6 +47,7 @@ target_link_libraries(vst_rack PUBLIC vst_instrument juce::juce_data_structures)
 # sequence: canonical Sequence/Step/timing model + serialization.
 add_library(vst_sequence STATIC
   libs/sequence/Sequence.cpp libs/sequence/Sequence.h
+  libs/sequence/PatternAdapter.cpp libs/sequence/PatternAdapter.h
   libs/sequence/RealtimeSequenceBridge.h)
 target_include_directories(vst_sequence PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_sequence PUBLIC juce::juce_audio_basics)
@@ -83,11 +84,19 @@ target_include_directories(vst_bass PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_bass PUBLIC
   juce::juce_audio_basics juce::juce_audio_processors)
 
+# acid: self-contained 303-style DSP, deterministic generator and provider.
+add_library(vst_acid STATIC
+  libs/acid/AcidEngine.cpp libs/acid/AcidEngine.h
+  libs/acid/AcidGenerator.cpp libs/acid/AcidGenerator.h
+  libs/acid/AcidProvider.cpp libs/acid/AcidProvider.h)
+target_include_directories(vst_acid PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_acid PUBLIC vst_instrument vst_sequence)
+
 add_library(vst_modules STATIC
   libs/modules/BuiltInProvider.cpp libs/modules/BuiltInProvider.h)
 target_include_directories(vst_modules PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_modules PUBLIC
-  vst_instrument vst_bass juce::juce_audio_basics)
+  vst_instrument vst_bass vst_acid juce::juce_audio_basics)
 
 # preset: preset format, filesystem, factory/user distinction, migration.
 add_library(vst_preset STATIC
@@ -171,6 +180,14 @@ add_executable(instrument_contract_tests
 target_link_libraries(instrument_contract_tests PRIVATE vst_instrument)
 add_test(NAME instrument_contract_tests COMMAND instrument_contract_tests)
 
+add_executable(instrument_compliance_tests
+  tests/instrument/BuiltInComplianceTests.cpp
+  tests/instrument/InstrumentComplianceHarness.cpp
+  tests/instrument/InstrumentComplianceHarness.h)
+target_include_directories(instrument_compliance_tests PRIVATE tests ${VST_LIBS_DIR})
+target_link_libraries(instrument_compliance_tests PRIVATE vst_modules)
+add_test(NAME instrument_compliance_tests COMMAND instrument_compliance_tests)
+
 add_executable(rack_router_tests tests/rack/RackRouterTests.cpp)
 target_link_libraries(rack_router_tests PRIVATE vst_rack)
 add_test(NAME rack_router_tests COMMAND rack_router_tests)
@@ -216,6 +233,16 @@ add_test(NAME part_mixer_tests COMMAND part_mixer_tests)
 add_executable(psy_bass_tests tests/bass/PsyBassTests.cpp)
 target_link_libraries(psy_bass_tests PRIVATE vst_bass)
 add_test(NAME psy_bass_tests COMMAND psy_bass_tests)
+
+add_executable(acid_tests
+  tests/acid/AcidTests.cpp
+  tests/instrument/InstrumentComplianceHarness.cpp
+  tests/instrument/InstrumentComplianceHarness.h
+  tests/support/ReferenceInstrument.cpp
+  tests/support/ReferenceInstrument.h)
+target_include_directories(acid_tests PRIVATE tests ${VST_LIBS_DIR})
+target_link_libraries(acid_tests PRIVATE vst_acid vst_instrument)
+add_test(NAME acid_tests COMMAND acid_tests)
 
 add_executable(preset_tests tests/preset/PresetTests.cpp)
 target_link_libraries(preset_tests PRIVATE vst_preset vst_parts)

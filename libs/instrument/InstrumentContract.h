@@ -42,6 +42,19 @@ struct ResourceBudget {
 
 enum class ParameterType : std::uint8_t { floating, integer, boolean, choice };
 enum class TailPolicy : std::uint8_t { none, bounded, preserveOnBypass };
+enum class ContentKind : std::uint8_t {
+    soundPreset,
+    patternPreset,
+    generatorProfile
+};
+enum class ContentStatus : std::uint8_t {
+    ok,
+    unsupported,
+    notFound,
+    incompatible,
+    invalidArgument,
+    budgetExceeded
+};
 enum Capability : std::uint64_t {
     notes = 1ULL << 0,
     sequence = 1ULL << 1,
@@ -83,6 +96,37 @@ struct InstrumentDescriptor {
     ResourceBudget budget;
     std::vector<ParameterDescriptor> parameters;
 };
+
+struct ContentDescriptor {
+    InstrumentId instrumentId;
+    std::string id;
+    std::string name;
+    ContentKind kind { ContentKind::soundPreset };
+    std::uint32_t schemaVersion { 1 };
+    std::uint32_t contentVersion { 1 };
+    std::uint32_t supportedSequenceFields { VOX_SEQUENCE_ALL };
+    std::uint32_t supportedPresetClasses {};
+    std::uint32_t macroValueMask {};
+    std::array<float, macrosPerSlot> macroValues {};
+};
+
+// Stable traversal-order-independent seed domain. SlotId is hashed as explicit
+// little-endian bytes; std::hash and registry/index order are never involved.
+inline constexpr std::uint32_t generationSubSeed(
+    std::uint32_t globalSeed, SlotId slotId,
+    std::string_view instrumentId) noexcept
+{
+    std::uint32_t hash = 2166136261u ^ globalSeed;
+    for (std::size_t byte = 0; byte < sizeof(slotId); ++byte) {
+        hash ^= static_cast<std::uint8_t>(slotId >> (byte * 8));
+        hash *= 16777619u;
+    }
+    for (const auto character : instrumentId) {
+        hash ^= static_cast<std::uint8_t>(character);
+        hash *= 16777619u;
+    }
+    return hash;
+}
 
 enum class ResourceStatus { found, missing, corrupt, incompatible };
 struct ResourceView {
@@ -144,6 +188,24 @@ public:
     // Host calls create only outside realtime processing.
     virtual std::unique_ptr<InstrumentInstance> create(
         std::string_view instrumentId, const CreateContext&) = 0;
+    // Optional control-thread musical-content service. Defaults preserve ABI
+    // behavior for DSP-only providers. Future external providers adapt these
+    // operations through the separate VoxInstrumentContentApiV1 POD table.
+    virtual std::span<const ContentDescriptor> contentDescriptors(
+        std::string_view) const noexcept { return {}; }
+    virtual ContentStatus applySoundPreset(
+        std::string_view, std::string_view,
+        InstrumentInstance&) const noexcept
+    {
+        return ContentStatus::unsupported;
+    }
+    virtual ContentStatus generatePattern(
+        std::string_view, std::string_view,
+        const VoxGenerationContextV1&, const VoxPatternV1*,
+        VoxPatternV1&) const noexcept
+    {
+        return ContentStatus::unsupported;
+    }
 };
 
 enum class ResolutionStatus {

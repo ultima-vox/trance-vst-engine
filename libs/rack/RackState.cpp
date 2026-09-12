@@ -39,6 +39,18 @@ bool readUnsigned(const juce::var& value, UInt& result)
     result = static_cast<UInt>(parsed);
     return true;
 }
+bool readSigned(const juce::var& value, int& result)
+{
+    const auto text = value.toString().toStdString();
+    if (text.empty()) return false;
+    int parsed {};
+    const auto converted = std::from_chars(text.data(), text.data() + text.size(),
+                                           parsed, 10);
+    if (converted.ec != std::errc {} || converted.ptr != text.data() + text.size())
+        return false;
+    result = parsed;
+    return true;
+}
 } // namespace
 
 juce::ValueTree serialize(
@@ -48,7 +60,7 @@ juce::ValueTree serialize(
     root.setProperty("schemaVersion", schemaVersion, nullptr);
     for (const auto& slot : slots) {
         juce::ValueTree child(slotType);
-        child.setProperty("schemaVersion", static_cast<juce::int64>(slot.schemaVersion), nullptr);
+        child.setProperty("schemaVersion", static_cast<juce::int64>(schemaVersion), nullptr);
         child.setProperty("slotId", juce::String(slot.slotId), nullptr);
         child.setProperty("instrumentId", juce::String(slot.instrumentId), nullptr);
         child.setProperty("providerId", juce::String(slot.resolvedProviderId), nullptr);
@@ -71,6 +83,8 @@ juce::ValueTree serialize(
         child.setProperty("output", static_cast<int>(slot.outputDestination), nullptr);
         child.setProperty("soundPreset", juce::String(slot.soundPreset), nullptr);
         child.setProperty("patternPreset", juce::String(slot.patternPreset), nullptr);
+        child.setProperty("patternSchemaVersion",
+                          static_cast<juce::int64>(slot.patternSchemaVersion), nullptr);
         for (std::size_t i = 0; i < slot.macros.size(); ++i) {
             child.setProperty("macro" + juce::String(static_cast<int>(i + 1)),
                               slot.macros[i], nullptr);
@@ -79,6 +93,8 @@ juce::ValueTree serialize(
         }
         juce::MemoryBlock payload(slot.modulePayload.data(), slot.modulePayload.size());
         child.setProperty("modulePayload", payload.toBase64Encoding(), nullptr);
+        juce::MemoryBlock pattern(slot.patternPayload.data(), slot.patternPayload.size());
+        child.setProperty("patternPayload", pattern.toBase64Encoding(), nullptr);
         root.appendChild(child, nullptr);
     }
     return root;
@@ -91,7 +107,8 @@ bool deserialize(const juce::ValueTree& root,
     std::uint32_t encodedSchema {};
     if (!root.isValid() || !root.hasType(rackType)
         || !readUnsigned(root.getProperty("schemaVersion"), encodedSchema)
-        || encodedSchema != static_cast<std::uint32_t>(schemaVersion)
+        || encodedSchema < 1
+        || encodedSchema > static_cast<std::uint32_t>(schemaVersion)
         || root.getNumChildren() != static_cast<int>(instrument::maxSlots)) {
         diagnostic = "invalid rack state root";
         return false;
@@ -120,6 +137,10 @@ bool deserialize(const juce::ValueTree& root,
             diagnostic = "invalid rack unsigned metadata";
             return false;
         }
+        if (slot.schemaVersion != encodedSchema) {
+            diagnostic = "incompatible rack slot schema";
+            return false;
+        }
         slot.instrumentId = child.getProperty("instrumentId").toString().toStdString();
         slot.resolvedProviderId = child.getProperty("providerId").toString().toStdString();
         if (!validStableId(slot.instrumentId, true)
@@ -127,14 +148,31 @@ bool deserialize(const juce::ValueTree& root,
             diagnostic = "invalid rack stable ID";
             return false;
         }
-        slot.routing.mode = static_cast<RouteMode>(
-            static_cast<int>(child.getProperty("routeMode", -1)));
-        slot.routing.channel = static_cast<std::uint8_t>(static_cast<int>(child.getProperty("channel", 0)));
-        slot.routing.keyLow = static_cast<std::uint8_t>(static_cast<int>(child.getProperty("keyLow", -1)));
-        slot.routing.keyHigh = static_cast<std::uint8_t>(static_cast<int>(child.getProperty("keyHigh", -1)));
-        slot.routing.velocityLow = static_cast<std::uint8_t>(static_cast<int>(child.getProperty("velocityLow", 0)));
-        slot.routing.velocityHigh = static_cast<std::uint8_t>(static_cast<int>(child.getProperty("velocityHigh", 0)));
-        slot.routing.transpose = static_cast<std::int8_t>(static_cast<int>(child.getProperty("transpose", 99)));
+        int routeMode {}, channel {}, keyLow {}, keyHigh {}, velocityLow {},
+            velocityHigh {}, transpose {};
+        if (!readSigned(child.getProperty("routeMode", -1), routeMode)
+            || !readSigned(child.getProperty("channel", 0), channel)
+            || !readSigned(child.getProperty("keyLow", -1), keyLow)
+            || !readSigned(child.getProperty("keyHigh", -1), keyHigh)
+            || !readSigned(child.getProperty("velocityLow", 0), velocityLow)
+            || !readSigned(child.getProperty("velocityHigh", 0), velocityHigh)
+            || !readSigned(child.getProperty("transpose", 99), transpose)
+            || routeMode < static_cast<int>(RouteMode::off)
+            || routeMode > static_cast<int>(RouteMode::layer)
+            || channel < 1 || channel > 16 || keyLow < 0 || keyLow > 127
+            || keyHigh < 0 || keyHigh > 127 || velocityLow < 1
+            || velocityLow > 127 || velocityHigh < 1 || velocityHigh > 127
+            || transpose < -48 || transpose > 48) {
+            diagnostic = "invalid rack routing metadata";
+            return false;
+        }
+        slot.routing.mode = static_cast<RouteMode>(routeMode);
+        slot.routing.channel = static_cast<std::uint8_t>(channel);
+        slot.routing.keyLow = static_cast<std::uint8_t>(keyLow);
+        slot.routing.keyHigh = static_cast<std::uint8_t>(keyHigh);
+        slot.routing.velocityLow = static_cast<std::uint8_t>(velocityLow);
+        slot.routing.velocityHigh = static_cast<std::uint8_t>(velocityHigh);
+        slot.routing.transpose = static_cast<std::int8_t>(transpose);
         slot.enabled = static_cast<bool>(child.getProperty("enabled", false));
         slot.mute = static_cast<bool>(child.getProperty("mute", false));
         slot.solo = static_cast<bool>(child.getProperty("solo", false));
@@ -147,6 +185,19 @@ bool deserialize(const juce::ValueTree& root,
         }
         slot.soundPreset = child.getProperty("soundPreset").toString().toStdString();
         slot.patternPreset = child.getProperty("patternPreset").toString().toStdString();
+        if (encodedSchema >= 2) {
+            if (!readUnsigned(child.getProperty("patternSchemaVersion"),
+                              slot.patternSchemaVersion)) {
+                diagnostic = "invalid pattern schema metadata";
+                return false;
+            }
+        } else {
+            slot.patternSchemaVersion = VOX_PATTERN_SCHEMA_V1;
+        }
+        if (slot.patternSchemaVersion == 0) {
+            diagnostic = "invalid pattern schema metadata";
+            return false;
+        }
         for (std::size_t macro = 0; macro < slot.macros.size(); ++macro) {
             slot.macros[macro] = static_cast<float>(child.getProperty(
                 "macro" + juce::String(static_cast<int>(macro + 1)), 0.0));
@@ -179,7 +230,28 @@ bool deserialize(const juce::ValueTree& root,
         slot.modulePayload.resize(payload.getSize());
         if (!slot.modulePayload.empty())
             std::memcpy(slot.modulePayload.data(), payload.getData(), payload.getSize());
-        if (!valid(slot.routing) || slot.schemaVersion != 1
+        if (encodedSchema >= 2) {
+            const auto encodedPattern = child.getProperty("patternPayload").toString();
+            constexpr auto maxEncodedPatternBytes =
+                4u * ((maxPatternPayloadBytes + 2u) / 3u);
+            if (encodedPattern.getNumBytesAsUTF8()
+                    > static_cast<int>(maxEncodedPatternBytes)) {
+                diagnostic = "rack pattern payload exceeds host budget";
+                return false;
+            }
+            juce::MemoryBlock pattern;
+            if (!pattern.fromBase64Encoding(encodedPattern)
+                || pattern.getSize() > maxPatternPayloadBytes) {
+                diagnostic = "invalid rack pattern payload";
+                return false;
+            }
+            slot.patternPayload.resize(pattern.getSize());
+            if (!slot.patternPayload.empty())
+                std::memcpy(slot.patternPayload.data(), pattern.getData(),
+                            pattern.getSize());
+        }
+        slot.schemaVersion = schemaVersion;
+        if (!valid(slot.routing)
             || slot.slotId == instrument::invalidSlotId
             || !ids.insert(slot.slotId).second || slot.outputDestination != 0) {
             diagnostic = "invalid or duplicate rack slot identity";

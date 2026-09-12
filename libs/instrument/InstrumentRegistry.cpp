@@ -98,6 +98,27 @@ bool InstrumentRegistry::registerProvider(
             diagnostic = "duplicate instrument ID";
             return false;
         }
+        for (const auto& content : provider->contentDescriptors(descriptor.id)) {
+            constexpr auto presetClasses = VOX_PRESET_CLASS_SOUND
+                | VOX_PRESET_CLASS_PATTERN | VOX_PRESET_CLASS_GENERATOR;
+            if (content.instrumentId != descriptor.id || !validId(content.id)
+                || content.name.empty() || content.schemaVersion == 0
+                || content.contentVersion == 0
+                || (content.supportedSequenceFields & ~VOX_SEQUENCE_ALL) != 0
+                || (content.supportedPresetClasses & ~presetClasses) != 0
+                || (content.macroValueMask & ~0xffu) != 0) {
+                diagnostic = "invalid instrument content descriptor";
+                return false;
+            }
+            for (std::size_t macro = 0; macro < macrosPerSlot; ++macro)
+                if ((content.macroValueMask & (1u << macro)) != 0
+                    && (!std::isfinite(content.macroValues[macro])
+                        || content.macroValues[macro] < 0.0f
+                        || content.macroValues[macro] > 1.0f)) {
+                    diagnostic = "invalid instrument content macro value";
+                    return false;
+                }
+        }
     }
     auto* accepted = provider.get();
     providers_.push_back(std::move(provider));

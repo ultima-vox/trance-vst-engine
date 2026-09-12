@@ -48,11 +48,11 @@ VstEngineAudioProcessorEditor::RackPage::RackPage(VstEngineAudioProcessor& p)
     macroTitle.setText("CUBASE AUTOMATION MACROS", juce::dontSendNotification);
     vstengine::ui::styleLabel(status, 12, juce::Justification::centredLeft,
                               vstengine::ui::colours::mutedText);
-    const std::array<juce::Component*, 22> components {
+    const std::array<juce::Component*, 24> components {
         &title, &routingTitle, &macroTitle, &status, &instrument, &midiIn,
         &layer, &enabled, &mute, &solo, &locked, &keyLow, &keyHigh,
         &velocityLow, &velocityHigh, &transpose, &level, &pan, &keyboard,
-        &swap, &move, &layerAction
+        &swap, &move, &layerAction, &soundPreset, &patternProfile
     };
     for (auto* component : components)
         addAndMakeVisible(component);
@@ -94,6 +94,24 @@ VstEngineAudioProcessorEditor::RackPage::RackPage(VstEngineAudioProcessor& p)
         status.setText(message, juce::dontSendNotification);
         refresh();
     };
+    soundPreset.onChange = [this] {
+        const auto index = soundPreset.getSelectedItemIndex();
+        if (index < 0 || index >= static_cast<int>(soundPresetIds.size())) return;
+        juce::String message;
+        processor.applySelectedSoundPreset(
+            soundPresetIds[static_cast<std::size_t>(index)], message);
+        status.setText(message.isEmpty() ? "Sound preset loaded" : message,
+                       juce::dontSendNotification);
+    };
+    patternProfile.onChange = [this] {
+        const auto index = patternProfile.getSelectedItemIndex();
+        if (index < 0 || index >= static_cast<int>(patternProfileIds.size())) return;
+        juce::String message;
+        processor.generateSelectedPattern(
+            patternProfileIds[static_cast<std::size_t>(index)], message);
+        status.setText(message.isEmpty() ? "Pattern generated" : message,
+                       juce::dontSendNotification);
+    };
     select(0);
 }
 
@@ -130,6 +148,23 @@ void VstEngineAudioProcessorEditor::RackPage::bindSelectedSlot()
         if (descriptors[i]->id == state.instrumentId)
             descriptorIndex = static_cast<int>(i + 1);
     instrument.setSelectedId(descriptorIndex, juce::dontSendNotification);
+    soundPreset.clear(juce::dontSendNotification);
+    patternProfile.clear(juce::dontSendNotification);
+    soundPresetIds.clear(); patternProfileIds.clear();
+    for (const auto& content : processor.selectedContent()) {
+        if (content.kind == vstengine::instrument::ContentKind::soundPreset) {
+            soundPresetIds.push_back(content.id);
+            soundPreset.addItem(content.name,
+                static_cast<int>(soundPresetIds.size()));
+        } else if (content.kind
+                   == vstengine::instrument::ContentKind::generatorProfile) {
+            patternProfileIds.push_back(content.id);
+            patternProfile.addItem(content.name,
+                static_cast<int>(patternProfileIds.size()));
+        }
+    }
+    soundPreset.setTextWhenNothingSelected("Sound preset");
+    patternProfile.setTextWhenNothingSelected("Generate pattern");
     pendingChannel = state.routing.mode == vstengine::rack::RouteMode::off
         ? 0 : state.routing.channel;
     midiIn.setSelectedId(pendingChannel + 1, juce::dontSendNotification);
@@ -206,6 +241,9 @@ void VstEngineAudioProcessorEditor::RackPage::resized()
     swap.setBounds(top.removeFromLeft(64).reduced(2));
     move.setBounds(top.removeFromLeft(64).reduced(2));
     layerAction.setBounds(top.removeFromLeft(70).reduced(2));
+    auto content = area.removeFromTop(34);
+    soundPreset.setBounds(content.removeFromLeft(220).reduced(2));
+    patternProfile.setBounds(content.removeFromLeft(220).reduced(2));
     routingTitle.setBounds(area.removeFromTop(22));
     auto toggles = area.removeFromTop(28);
     for (auto* button : { &layer, &enabled, &mute, &solo, &locked })
@@ -266,6 +304,9 @@ void VstEngineAudioProcessorEditor::SequencePage::setPlayHead(int step){sequence
 void VstEngineAudioProcessorEditor::SequencePage::refresh(){
     const auto* descriptor=processor.instrumentRack().descriptor(processor.selectedSlotIndex());
     const bool supported=descriptor && (descriptor->capabilities & vstengine::instrument::Capability::sequence)!=0;
+    sequencer.setSequence(processor.sequence());
+    sequencer.setSlideEnabled((processor.selectedSequenceFieldMask()
+        & VOX_SEQUENCE_SLIDE) != 0);
     sequencer.setEnabled(supported);sequencer.refreshFromModel();
     status.setText(supported?"Selected instrument sequence":"Selected instrument has no Sequence capability",juce::dontSendNotification);
 }

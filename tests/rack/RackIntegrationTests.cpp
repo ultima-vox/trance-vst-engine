@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <numeric>
 
 namespace {
@@ -39,7 +40,7 @@ int main()
     REQUIRE(registry.registerProvider(modules::createBuiltInProvider(), diagnostic),
             "built-in provider registers");
     REQUIRE(registry.descriptors().size() == 2,
-            "Bass and independent reference module registered");
+            "Bass and independent Acid module registered");
 
     rack::Rack rack(registry);
     REQUIRE(rack.prepare({ 48000.0, 2048, 2 }), "rack prepares");
@@ -47,14 +48,14 @@ int main()
     state[0].instrumentId = modules::bassInstrumentId;
     state[0].routing = { rack::RouteMode::channel, 1, 0, 127, 1, 127, 0 };
     state[0].macros = { 0.45f, 0.6f, 0.5f, 0.25f, 0.35f, 0.5f, 0.0f, 0.1f };
-    state[1].instrumentId = modules::referenceInstrumentId;
+    state[1].instrumentId = modules::acidInstrumentId;
     state[1].routing = { rack::RouteMode::channel, 2, 0, 127, 1, 127, 0 };
     state[1].macros[0] = 0.5f;
     state[1].macros[1] = 0.7f;
     REQUIRE(rack.replaceState(state, nullptr, diagnostic),
             "rack state loads transactionally");
     REQUIRE(rack.descriptor(0)->id == modules::bassInstrumentId
-                && rack.descriptor(1)->id == modules::referenceInstrumentId,
+                && rack.descriptor(1)->id == modules::acidInstrumentId,
             "slots resolve through descriptor boundary");
 
     const std::array bassMidi { noteOn(1, 36) };
@@ -64,7 +65,7 @@ int main()
     const std::array referenceMidi { noteOn(2, 60) };
     rack.reset();
     const auto reference = render(rack, referenceMidi);
-    REQUIRE(energy(reference) > 1.0e-5, "CH2 renders second real module");
+    REQUIRE(energy(reference) > 1.0e-5, "CH2 renders Acid module");
     double difference = 0.0;
     for (std::size_t i = 0; i < bass.size(); ++i)
         difference += std::abs(bass[i] - reference[i]);
@@ -107,6 +108,97 @@ int main()
             "save-load-save serialization canonical");
     REQUIRE(decoded[1].instrumentId == "com.ultimavox.missing",
             "unresolved identity survives serialization");
+
+    auto patternedState = rack.state();
+    patternedState[0].patternPreset = "Acid Pattern A";
+    patternedState[0].patternSchemaVersion = VOX_PATTERN_SCHEMA_V1;
+    patternedState[0].patternPayload = {
+        std::byte { 0x00 }, std::byte { 0x56 }, std::byte { 0xff },
+        std::byte { 0x10 }, std::byte { 0x00 }
+    };
+    const auto patterned = rack::state::serialize(patternedState);
+    REQUIRE(rack::state::deserialize(patterned, decoded, diagnostic),
+            "pattern-bearing rack state parses");
+    REQUIRE(decoded[0].patternPreset == "Acid Pattern A"
+                && decoded[0].patternSchemaVersion == VOX_PATTERN_SCHEMA_V1
+                && decoded[0].patternPayload == patternedState[0].patternPayload,
+            "pattern identity schema and opaque bytes round-trip");
+    REQUIRE(rack::state::serialize(decoded).toXmlString()
+                == patterned.toXmlString(),
+            "pattern-bearing save-load-save is canonical");
+
+    auto versionOne = patterned.createCopy();
+    versionOne.setProperty("schemaVersion", 1, nullptr);
+    for (int childIndex = 0; childIndex < versionOne.getNumChildren();
+         ++childIndex) {
+        auto child = versionOne.getChild(childIndex);
+        child.setProperty("schemaVersion", 1, nullptr);
+        child.removeProperty("patternSchemaVersion", nullptr);
+        child.removeProperty("patternPayload", nullptr);
+    }
+    REQUIRE(rack::state::deserialize(versionOne, decoded, diagnostic),
+            "rack schema v1 migrates to current schema");
+    REQUIRE(decoded[0].schemaVersion == rack::state::schemaVersion
+                && decoded[0].patternSchemaVersion == VOX_PATTERN_SCHEMA_V1
+                && decoded[0].patternPayload.empty()
+                && decoded[0].patternPreset == "Acid Pattern A",
+            "v1 migration defaults empty v1 payload without losing reference");
+    const auto migrated = rack::state::serialize(decoded);
+    REQUIRE(static_cast<int>(migrated.getProperty("schemaVersion"))
+                    == rack::state::schemaVersion
+                && migrated.getChild(0).hasProperty("patternSchemaVersion")
+                && migrated.getChild(0).hasProperty("patternPayload"),
+            "v1 migration serializes canonical v2 pattern fields");
+
+    for (const auto& [property, raw] : std::array {
+             std::pair { "routeMode", -1 }, std::pair { "routeMode", 3 },
+             std::pair { "channel", 0 }, std::pair { "channel", 17 },
+             std::pair { "keyLow", -1 }, std::pair { "keyLow", 128 },
+             std::pair { "keyHigh", -1 }, std::pair { "keyHigh", 128 },
+             std::pair { "velocityLow", 0 },
+             std::pair { "velocityLow", 128 },
+             std::pair { "velocityHigh", 0 },
+             std::pair { "velocityHigh", 128 },
+             std::pair { "transpose", -49 },
+             std::pair { "transpose", 49 } }) {
+        auto invalidRoute = patterned.createCopy();
+        invalidRoute.getChild(0).setProperty(property, raw, nullptr);
+        REQUIRE(!rack::state::deserialize(invalidRoute, decoded, diagnostic),
+                "raw routing integer outside contract rejected before narrowing");
+    }
+    auto overflowedRoute = patterned.createCopy();
+    overflowedRoute.getChild(0).setProperty("channel", "2147483648", nullptr);
+    REQUIRE(!rack::state::deserialize(overflowedRoute, decoded, diagnostic),
+            "overflowed raw routing integer rejected before narrowing");
+
+    auto incompatiblePattern = patternedState;
+    incompatiblePattern[0].patternSchemaVersion = VOX_PATTERN_SCHEMA_V1 + 1;
+    incompatiblePattern[0].patternPayload = {
+        std::byte { 0xde }, std::byte { 0xad }, std::byte { 0xbe },
+        std::byte { 0xef }
+    };
+    auto incompatibleRack = std::make_unique<rack::Rack>(registry);
+    REQUIRE(incompatibleRack->prepare({ 48000.0, 2048, 2 }),
+            "incompatible-pattern rack prepares");
+    REQUIRE(incompatibleRack->replaceState(incompatiblePattern, nullptr,
+                                           diagnostic),
+            "newer pattern schema commits as unresolved state");
+    REQUIRE(incompatibleRack->runtimeState()[0].resolution
+                    == instrument::ResolutionStatus::incompatibleSchema
+                && incompatibleRack->descriptor(0) == nullptr,
+            "newer pattern schema cannot instantiate instrument silently");
+    REQUIRE(incompatibleRack->state()[0].patternSchemaVersion
+                    == VOX_PATTERN_SCHEMA_V1 + 1
+                && incompatibleRack->state()[0].patternPayload
+                    == incompatiblePattern[0].patternPayload,
+            "incompatible pattern schema and opaque payload remain recoverable");
+    const auto incompatibleEncoded = rack::state::serialize(
+        incompatibleRack->state());
+    REQUIRE(rack::state::deserialize(incompatibleEncoded, decoded, diagnostic)
+                && decoded[0].patternSchemaVersion == VOX_PATTERN_SCHEMA_V1 + 1
+                && decoded[0].patternPayload
+                    == incompatiblePattern[0].patternPayload,
+            "incompatible pattern state survives canonical persistence");
 
     auto malformed = serialized.createCopy();
     malformed.getChild(0).setProperty("instrumentId", "Invalid/Instrument", nullptr);
