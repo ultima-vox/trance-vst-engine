@@ -1,8 +1,10 @@
 #pragma once
 #include "instrument/InstrumentRegistry.h"
+#include "modulation/ModulationState.h"
 #include "rack/RackRouter.h"
 #include <array>
 #include <atomic>
+#include <mutex>
 
 namespace vstengine::rack {
 
@@ -21,6 +23,10 @@ public:
     bool updatePatternState(std::size_t slotIndex, std::string presetId,
                             std::uint32_t schemaVersion,
                             std::vector<std::byte> payload);
+    bool configureModulation(
+        std::size_t slotIndex,
+        std::span<const modulation::Route> routes,
+        std::string& diagnostic);
     void process(std::span<float*> outputs, std::uint32_t sampleCount,
                  std::span<const VoxMidiEventV1> midi, double bpm,
                  double ppqPosition, bool playing,
@@ -36,35 +42,56 @@ public:
     [[nodiscard]] const auto& state() const noexcept { return state_; }
     [[nodiscard]] std::array<PersistentSlotState, instrument::maxSlots>
         snapshotState(std::span<const ProcessSlotControls> controls = {}) const;
-    [[nodiscard]] const auto& runtimeState() const noexcept { return runtimeState_; }
+    [[nodiscard]] std::array<RuntimeSlotState, instrument::maxSlots>
+        runtimeState() const noexcept;
     [[nodiscard]] const instrument::InstrumentDescriptor* descriptor(
         std::size_t slotIndex) const noexcept;
     [[nodiscard]] std::uint32_t latencySamples() const noexcept;
     [[nodiscard]] std::uint32_t tailSamples() const noexcept;
 
 private:
+    struct ModulationRuntime {
+        modulation::DestinationRegistry registry;
+        modulation::ModulationMatrix matrix;
+        modulation::SourceValues sources;
+        std::array<float, modulation::maxDestinations> baseNormalized {};
+        std::array<double, modulation::maxLfos> lfoPhase {};
+        std::uint32_t randomState { 0x6d2b79f5u };
+        std::uint32_t initialRandomState { 0x6d2b79f5u };
+        std::int64_t sampleHoldStep { -1 };
+    };
     struct SlotRuntime {
         std::unique_ptr<instrument::InstrumentInstance> instance;
         const instrument::InstrumentDescriptor* descriptor {};
         std::array<std::vector<float>, 2> audio;
         std::array<float*, 2> pointers {};
+        std::unique_ptr<ModulationRuntime> modulation;
     };
     bool buildSlot(std::size_t, const PersistentSlotState&,
                    instrument::ResourceResolver*, SlotRuntime&,
                    RuntimeSlotState&, std::string& diagnostic);
     void beginExclusive() const noexcept;
     void endExclusive() const noexcept;
+    static void applyModulation(SlotRuntime&, const PersistentSlotState&,
+                                const ProcessSlotControls&,
+                                const RackRouter::DestinationBuffer&,
+                                std::uint32_t sampleCount, double sampleRate,
+                                double bpm, double ppq) noexcept;
 
     instrument::InstrumentRegistry& registry_;
     instrument::PrepareSpec spec_;
     std::array<PersistentSlotState, instrument::maxSlots> state_ {};
     std::array<RuntimeSlotState, instrument::maxSlots> runtimeState_ {};
+    std::array<std::atomic<std::uint64_t>, instrument::maxSlots>
+        droppedMidiEvents_ {};
     std::array<SlotRuntime, instrument::maxSlots> runtime_ {};
     std::array<RackRouter::DestinationBuffer, instrument::maxSlots> routed_ {};
     std::array<ProcessSlotControls, instrument::maxSlots> defaultControls_ {};
     RackRouter router_;
     mutable std::atomic<bool> mutationGate_ { false };
     mutable std::atomic<std::uint32_t> activeProcessors_ { 0 };
+    // Non-realtime state serialization only. Audio callback never locks.
+    mutable std::mutex persistentStateMutex_;
 };
 
 } // namespace vstengine::rack

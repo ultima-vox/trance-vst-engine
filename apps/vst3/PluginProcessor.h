@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <memory>
+#include "effects/EffectsChain.h"
 #include "instrument/InstrumentRegistry.h"
 #include "midi/GeneratedNoteScheduler.h"
 #include "midi/SourceSelector.h"
@@ -37,7 +38,8 @@ public:
     double getTailLengthSeconds() const override
     {
         return currentSampleRate > 0.0
-            ? static_cast<double>(rack.tailSamples()) / currentSampleRate : 0.0;
+            ? static_cast<double>(rack.tailSamples()
+                + effectsChain.tailSamples()) / currentSampleRate : 0.0;
     }
 
     int getNumPrograms() override { return 1; }
@@ -86,6 +88,11 @@ public:
     [[nodiscard]] bool isPartLocked(int partIndex) const noexcept;
     [[nodiscard]] vstengine::rack::Rack& instrumentRack() noexcept { return rack; }
     [[nodiscard]] const vstengine::rack::Rack& instrumentRack() const noexcept { return rack; }
+    [[nodiscard]] vstengine::effects::ChainState internalEffectsState() const noexcept
+    {
+        return effectsChain.state();
+    }
+    bool applyInternalEffectsPreset(std::string_view presetId) noexcept;
     void selectSlot(std::size_t index) noexcept
     {
         selectedSlot.store(juce::jlimit<std::size_t>(0,
@@ -147,9 +154,14 @@ private:
         vstengine::parts::PartRegistry& destination) noexcept;
     void syncParametersFromParts();
     void syncRackControlsFromParameters() noexcept;
+    void readRackControlsFromParameters(
+        std::span<vstengine::rack::ProcessSlotControls>) const noexcept;
     void cacheRackParameterPointers();
     [[nodiscard]] std::array<vstengine::rack::PersistentSlotState,
         vstengine::instrument::maxSlots> snapshotRackWithPatterns();
+    [[nodiscard]] juce::ValueTree captureEffectsState() const;
+    bool prepareEffectsState(const juce::ValueTree&,
+                             vstengine::effects::EffectsChain&) const;
     bool restoreSlotPatterns(const std::array<vstengine::rack::PersistentSlotState,
         vstengine::instrument::maxSlots>&, bool allowEmpty) noexcept;
     std::size_t convertMidi(const juce::MidiBuffer&,
@@ -161,6 +173,7 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     vstengine::instrument::InstrumentRegistry instrumentRegistry;
     vstengine::rack::Rack rack;
+    vstengine::effects::EffectsChain effectsChain;
     vstengine::parts::PartRegistry parts;
     struct PatternRuntime {
         std::array<vstengine::sequence::Sequence,
@@ -181,6 +194,7 @@ private:
     std::unique_ptr<vstengine::PresetManager> presetManager_;
     // Generated-playback state machine (audio thread, see libs/midi).
     double currentSampleRate { 44100.0 };
+    std::uint32_t currentMaximumBlockSize { 512 };
     bool wasTransportPlaying { false };
     std::atomic<bool> panicRequested { false };
 

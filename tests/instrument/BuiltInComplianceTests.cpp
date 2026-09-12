@@ -7,7 +7,10 @@ int main()
 {
     auto provider = vstengine::modules::createBuiltInProvider();
     for (const auto id : { vstengine::modules::bassInstrumentId,
-                           vstengine::modules::acidInstrumentId }) {
+                           vstengine::modules::acidInstrumentId,
+                           vstengine::modules::leadInstrumentId,
+                           vstengine::modules::semanticFxInstrumentId,
+                           vstengine::modules::atmosInstrumentId }) {
         const auto report = vstengine::tests::runInstrumentCompliance(
             *provider, id);
         if (!report) {

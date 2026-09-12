@@ -1,12 +1,15 @@
 #include "modules/BuiltInProvider.h"
 #include "rack/Rack.h"
 #include "rack/RackState.h"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <numeric>
+#include <thread>
 
 namespace {
 int run = 0;
@@ -20,6 +23,14 @@ VoxMidiEventV1 noteOn(int channel, int note)
 double energy(const std::vector<float>& audio)
 {
     return std::inner_product(audio.begin(), audio.end(), audio.begin(), 0.0);
+}
+double waveformDifference(const std::vector<float>& first,
+                          const std::vector<float>& second)
+{
+    double result {};
+    for (std::size_t index = 0; index < first.size(); ++index)
+        result += std::abs(first[index] - second[index]);
+    return result;
 }
 std::vector<float> render(vstengine::rack::Rack& rack,
                           std::span<const VoxMidiEventV1> midi)
@@ -39,8 +50,8 @@ int main()
     std::string diagnostic;
     REQUIRE(registry.registerProvider(modules::createBuiltInProvider(), diagnostic),
             "built-in provider registers");
-    REQUIRE(registry.descriptors().size() == 2,
-            "Bass and independent Acid module registered");
+    REQUIRE(registry.descriptors().size() == 5,
+            "all five production instrument families registered");
 
     rack::Rack rack(registry);
     REQUIRE(rack.prepare({ 48000.0, 2048, 2 }), "rack prepares");
@@ -75,6 +86,65 @@ int main()
     rack.reset();
     REQUIRE(energy(render(rack, wrongMidi)) < 1.0e-12,
             "wrong channel reaches no engine");
+
+    // Shared modulation runs inside each production slot and persists with
+    // SlotId/InstrumentId state. Envelope source is driven by routed NoteOn.
+    const std::array moduleIds { modules::bassInstrumentId,
+        modules::acidInstrumentId, modules::leadInstrumentId,
+        modules::semanticFxInstrumentId, modules::atmosInstrumentId };
+    for (std::size_t slot = 2; slot < moduleIds.size(); ++slot) {
+        REQUIRE(rack.loadModule(slot, moduleIds[slot], nullptr, diagnostic),
+                "production module loads for modulation integration");
+        auto routing = rack.state()[slot].routing;
+        routing.mode = rack::RouteMode::channel;
+        routing.channel = static_cast<std::uint8_t>(slot + 1);
+        rack.updateControls(slot, routing, true, false, false, false, 1.0f,
+                            0.0f);
+    }
+    for (std::size_t slot = 0; slot < moduleIds.size(); ++slot) {
+        const auto* descriptor = rack.descriptor(slot);
+        REQUIRE(descriptor != nullptr, "modulation target module resolved");
+        const auto parameter = std::find_if(descriptor->parameters.begin(),
+            descriptor->parameters.end(), [](const auto& candidate) {
+                return candidate.modulatable;
+            });
+        REQUIRE(parameter != descriptor->parameters.end(),
+                "module exposes real modulation destination");
+        const modulation::Route route {
+            { modulation::SourceKind::envelope, 0 },
+            modulation::SourceTransform::direct,
+            modulation::destinationKey(descriptor->id, parameter->id), -0.35f
+        };
+        rack.reset();
+        const std::array midi { noteOn(static_cast<int>(slot + 1),
+                                       slot == 0 ? 36 : 60) };
+        const auto unmodulated = render(rack, midi);
+        REQUIRE(rack.configureModulation(slot, { &route, 1 }, diagnostic),
+                "per-slot modulation route configures");
+        rack.reset();
+        const auto modulated = render(rack, midi);
+        REQUIRE(energy(modulated) > 1.0e-9,
+                "modulated production module renders finite audio");
+        REQUIRE(waveformDifference(unmodulated, modulated) > 1.0e-4,
+                "route materially changes production module DSP");
+        REQUIRE(!rack.state()[slot].modulationPayload.empty(),
+                "modulation graph captured in slot state");
+    }
+    const auto modulatedSerialized = rack::state::serialize(rack.state());
+    std::array<rack::PersistentSlotState, instrument::maxSlots>
+        modulatedDecoded;
+    REQUIRE(rack::state::deserialize(modulatedSerialized, modulatedDecoded,
+                                     diagnostic),
+            "modulation-bearing rack state parses");
+    for (std::size_t slot = 0; slot < moduleIds.size(); ++slot)
+        REQUIRE(modulatedDecoded[slot].modulationPayload
+                    == rack.state()[slot].modulationPayload,
+                "per-slot modulation graph round-trips canonically");
+    auto modulationRestored = std::make_unique<rack::Rack>(registry);
+    REQUIRE(modulationRestored->prepare({ 48000.0, 2048, 2 })
+                && modulationRestored->replaceState(modulatedDecoded, nullptr,
+                                                     diagnostic),
+            "modulation graph restores transactionally for all engines");
 
     state[1].routing = { rack::RouteMode::layer, 1, 48, 72, 80, 127, 0 };
     REQUIRE(rack.replaceState(state, nullptr, diagnostic), "Layer state loads");
@@ -148,7 +218,7 @@ int main()
                     == rack::state::schemaVersion
                 && migrated.getChild(0).hasProperty("patternSchemaVersion")
                 && migrated.getChild(0).hasProperty("patternPayload"),
-            "v1 migration serializes canonical v2 pattern fields");
+            "v1 migration serializes canonical current pattern fields");
 
     for (const auto& [property, raw] : std::array {
              std::pair { "routeMode", -1 }, std::pair { "routeMode", 3 },
@@ -243,6 +313,27 @@ int main()
     REQUIRE(first == second, "rack reset render deterministic");
     REQUIRE(rack.latencySamples() == 0 && rack.tailSamples() > 0,
             "rack aggregates latency and tail");
+
+    // Audio publishes diagnostic counters atomically for UI polling.
+    const VoxMidiEventV1 modulationEvent { 0, 3, { 0xb0, 1, 64 } };
+    std::vector<VoxMidiEventV1> overflow(
+        rack::RackRouter::eventCapacity + 17, modulationEvent);
+    rack.reset();
+    (void) render(rack, overflow);
+    REQUIRE(rack.runtimeState()[0].droppedMidiEvents == 17,
+            "dropped MIDI counter published without touching runtime state");
+    std::atomic<bool> counterReadOk { true };
+    std::thread counterReader([&] {
+        for (int iteration = 0; iteration < 10000; ++iteration)
+            if (rack.runtimeState()[0].droppedMidiEvents > 1717)
+                counterReadOk.store(false, std::memory_order_relaxed);
+    });
+    for (int iteration = 0; iteration < 100; ++iteration)
+        (void) render(rack, overflow);
+    counterReader.join();
+    REQUIRE(counterReadOk.load(std::memory_order_relaxed)
+                && rack.runtimeState()[0].droppedMidiEvents == 1717,
+            "dropped MIDI counter supports concurrent UI reads");
 
     std::cout << "Rack integration tests passed (" << run << ")\n";
     return EXIT_SUCCESS;

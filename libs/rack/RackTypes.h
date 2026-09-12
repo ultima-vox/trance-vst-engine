@@ -18,7 +18,7 @@ struct Routing {
 };
 
 struct PersistentSlotState {
-    std::uint32_t schemaVersion { 2 };
+    std::uint32_t schemaVersion { 3 };
     instrument::SlotId slotId { instrument::invalidSlotId };
     instrument::InstrumentId instrumentId;
     std::string resolvedProviderId;
@@ -40,6 +40,7 @@ struct PersistentSlotState {
     std::array<float, instrument::macrosPerSlot> macros {};
     std::array<instrument::ParameterId, instrument::macrosPerSlot>
         macroAssignments {};
+    std::vector<std::byte> modulationPayload;
     std::vector<std::byte> modulePayload;
 };
 

@@ -92,11 +92,49 @@ add_library(vst_acid STATIC
 target_include_directories(vst_acid PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_acid PUBLIC vst_instrument vst_sequence)
 
+# lead: production polyphonic lead DSP, presets and deterministic generator.
+add_library(vst_lead STATIC
+  libs/lead/LeadEngine.cpp libs/lead/LeadEngine.h
+  libs/lead/LeadGenerator.cpp libs/lead/LeadGenerator.h
+  libs/lead/LeadProvider.cpp libs/lead/LeadProvider.h)
+target_include_directories(vst_lead PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_lead PUBLIC vst_instrument vst_sequence)
+
+# semantic FX: deterministic one-shot transition/effect families.
+add_library(vst_semantic_fx STATIC
+  libs/semanticfx/SemanticFxEngine.cpp libs/semanticfx/SemanticFxEngine.h
+  libs/semanticfx/SemanticFxGenerator.cpp libs/semanticfx/SemanticFxGenerator.h
+  libs/semanticfx/SemanticFxProvider.cpp libs/semanticfx/SemanticFxProvider.h)
+target_include_directories(vst_semantic_fx PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_semantic_fx PUBLIC vst_instrument vst_sequence)
+
+# atmos: long-form deterministic evolving texture instrument.
+add_library(vst_atmos STATIC
+  libs/atmos/AtmosEngine.cpp libs/atmos/AtmosEngine.h
+  libs/atmos/AtmosGenerator.cpp libs/atmos/AtmosGenerator.h
+  libs/atmos/AtmosProvider.cpp libs/atmos/AtmosProvider.h)
+target_include_directories(vst_atmos PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_atmos PUBLIC vst_instrument vst_sequence)
+
+# shared modulation: descriptor-driven destination registry and bounded matrix.
+add_library(vst_modulation STATIC
+  libs/modulation/Modulation.cpp libs/modulation/Modulation.h
+  libs/modulation/ModulationState.cpp libs/modulation/ModulationState.h)
+target_include_directories(vst_modulation PUBLIC ${VST_LIBS_DIR})
+target_link_libraries(vst_modulation PUBLIC vst_instrument)
+target_link_libraries(vst_rack PUBLIC vst_modulation)
+
+# internal creative FX: fixed bounded stereo chain and canonical state.
+add_library(vst_effects STATIC
+  libs/effects/EffectsChain.cpp libs/effects/EffectsChain.h)
+target_include_directories(vst_effects PUBLIC ${VST_LIBS_DIR})
+
 add_library(vst_modules STATIC
   libs/modules/BuiltInProvider.cpp libs/modules/BuiltInProvider.h)
 target_include_directories(vst_modules PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_modules PUBLIC
-  vst_instrument vst_bass vst_acid juce::juce_audio_basics)
+  vst_instrument vst_bass vst_acid vst_lead vst_semantic_fx vst_atmos
+  juce::juce_audio_basics)
 
 # preset: preset format, filesystem, factory/user distinction, migration.
 add_library(vst_preset STATIC
@@ -155,7 +193,7 @@ target_compile_definitions(VstEngine PUBLIC
 target_link_libraries(VstEngine PRIVATE
   juce::juce_audio_utils juce::juce_dsp
   vst_core vst_instrument vst_rack vst_modules vst_sequence vst_parts
-  vst_transport vst_midi vst_preset vst_generator vst_ui)
+  vst_transport vst_midi vst_preset vst_generator vst_ui vst_effects)
 
 if(MSVC)
   # JUCE's shared-code target emits one PDB. /FS serializes concurrent compiler
@@ -244,6 +282,38 @@ target_include_directories(acid_tests PRIVATE tests ${VST_LIBS_DIR})
 target_link_libraries(acid_tests PRIVATE vst_acid vst_instrument)
 add_test(NAME acid_tests COMMAND acid_tests)
 
+add_executable(lead_tests
+  tests/lead/LeadTests.cpp
+  tests/instrument/InstrumentComplianceHarness.cpp
+  tests/instrument/InstrumentComplianceHarness.h)
+target_include_directories(lead_tests PRIVATE tests ${VST_LIBS_DIR})
+target_link_libraries(lead_tests PRIVATE vst_lead vst_instrument)
+add_test(NAME lead_tests COMMAND lead_tests)
+
+add_executable(semantic_fx_tests
+  tests/semanticfx/SemanticFxTests.cpp
+  tests/instrument/InstrumentComplianceHarness.cpp
+  tests/instrument/InstrumentComplianceHarness.h)
+target_include_directories(semantic_fx_tests PRIVATE tests ${VST_LIBS_DIR})
+target_link_libraries(semantic_fx_tests PRIVATE vst_semantic_fx vst_instrument)
+add_test(NAME semantic_fx_tests COMMAND semantic_fx_tests)
+
+add_executable(atmos_tests
+  tests/atmos/AtmosTests.cpp
+  tests/instrument/InstrumentComplianceHarness.cpp
+  tests/instrument/InstrumentComplianceHarness.h)
+target_include_directories(atmos_tests PRIVATE tests ${VST_LIBS_DIR})
+target_link_libraries(atmos_tests PRIVATE vst_atmos vst_instrument)
+add_test(NAME atmos_tests COMMAND atmos_tests)
+
+add_executable(modulation_tests tests/modulation/ModulationTests.cpp)
+target_link_libraries(modulation_tests PRIVATE vst_modulation)
+add_test(NAME modulation_tests COMMAND modulation_tests)
+
+add_executable(effects_tests tests/effects/EffectsChainTests.cpp)
+target_link_libraries(effects_tests PRIVATE vst_effects)
+add_test(NAME effects_tests COMMAND effects_tests)
+
 add_executable(preset_tests tests/preset/PresetTests.cpp)
 target_link_libraries(preset_tests PRIVATE vst_preset vst_parts)
 add_test(NAME preset_tests COMMAND preset_tests)
@@ -280,11 +350,17 @@ add_test(NAME part_audio_isolation_tests COMMAND part_audio_isolation_tests)
 # provides NSIS install/uninstall and ZIP artifact for CI/review environments.
 install(DIRECTORY
   "${CMAKE_CURRENT_BINARY_DIR}/VstEngine_artefacts/$<CONFIG>/VST3/Vox Electronic Engine.vst3"
-  DESTINATION "VST3")
+  DESTINATION "."
+  COMPONENT VoxPlugin)
 set(CPACK_PACKAGE_NAME "Vox Electronic Engine")
 set(CPACK_PACKAGE_VENDOR "Ultima Vox")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "Vox Electronic Engine")
+# Package only product component. JUCE also publishes SDK install rules; letting
+# CPack use every project rule would put JUCE headers, libraries and juceaide in
+# release artifact.
+set(CPACK_INSTALL_CMAKE_PROJECTS
+  "${CMAKE_BINARY_DIR};${PROJECT_NAME};VoxPlugin;/")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY ".")
 option(VOX_ENABLE_NSIS "Build Windows NSIS installer (requires makensis)" OFF)
 set(CPACK_GENERATOR "ZIP")
 if(VOX_ENABLE_NSIS)
@@ -294,4 +370,5 @@ set(CPACK_NSIS_DISPLAY_NAME "Vox Electronic Engine")
 set(CPACK_NSIS_PACKAGE_NAME "Vox Electronic Engine")
 set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 set(CPACK_NSIS_MODIFY_PATH OFF)
+set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64/Common Files/VST3")
 include(CPack)

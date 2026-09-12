@@ -1,5 +1,8 @@
 #include "modules/BuiltInProvider.h"
 #include "acid/AcidProvider.h"
+#include "lead/LeadProvider.h"
+#include "semanticfx/SemanticFxProvider.h"
+#include "atmos/AtmosProvider.h"
 #include "bass/PsyBassVoice.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
@@ -148,6 +151,15 @@ public:
         acidProvider_ = acid::createAcidProvider();
         for (const auto& descriptor : acidProvider_->descriptors())
             descriptors_.push_back(descriptor);
+        leadProvider_ = lead::createLeadProvider();
+        for (const auto& descriptor : leadProvider_->descriptors())
+            descriptors_.push_back(descriptor);
+        semanticFxProvider_ = semanticfx::createSemanticFxProvider();
+        for (const auto& descriptor : semanticFxProvider_->descriptors())
+            descriptors_.push_back(descriptor);
+        atmosProvider_ = atmos::createAtmosProvider();
+        for (const auto& descriptor : atmosProvider_->descriptors())
+            descriptors_.push_back(descriptor);
     }
     std::span<const instrument::InstrumentDescriptor>
         descriptors() const noexcept override { return descriptors_; }
@@ -157,29 +169,66 @@ public:
         if (id == bassInstrumentId) return std::make_unique<BassInstance>();
         if (id == acid::instrumentId)
             return acidProvider_->create(id, context);
+        if (id == lead::instrumentId)
+            return leadProvider_->create(id, context);
+        if (id == semanticfx::instrumentId)
+            return semanticFxProvider_->create(id, context);
+        if (id == atmos::instrumentId)
+            return atmosProvider_->create(id, context);
         return {};
     }
     std::span<const instrument::ContentDescriptor> contentDescriptors(
         std::string_view id) const noexcept override
     {
-        return acidProvider_->contentDescriptors(id);
+        if (id == acid::instrumentId)
+            return acidProvider_->contentDescriptors(id);
+        if (id == lead::instrumentId)
+            return leadProvider_->contentDescriptors(id);
+        if (id == semanticfx::instrumentId)
+            return semanticFxProvider_->contentDescriptors(id);
+        if (id == atmos::instrumentId)
+            return atmosProvider_->contentDescriptors(id);
+        return {};
     }
     instrument::ContentStatus applySoundPreset(
         std::string_view id, std::string_view preset,
         instrument::InstrumentInstance& instance) const noexcept override
     {
-        return acidProvider_->applySoundPreset(id, preset, instance);
+        if (id == acid::instrumentId)
+            return acidProvider_->applySoundPreset(id, preset, instance);
+        if (id == lead::instrumentId)
+            return leadProvider_->applySoundPreset(id, preset, instance);
+        if (id == semanticfx::instrumentId)
+            return semanticFxProvider_->applySoundPreset(id, preset, instance);
+        if (id == atmos::instrumentId)
+            return atmosProvider_->applySoundPreset(id, preset, instance);
+        return instrument::ContentStatus::notFound;
     }
     instrument::ContentStatus generatePattern(
         std::string_view id, std::string_view profile,
         const VoxGenerationContextV1& context, const VoxPatternV1* input,
         VoxPatternV1& output) const noexcept override
     {
-        return acidProvider_->generatePattern(id, profile, context, input, output);
+        if (id == acid::instrumentId)
+            return acidProvider_->generatePattern(id, profile, context, input,
+                                                   output);
+        if (id == lead::instrumentId)
+            return leadProvider_->generatePattern(id, profile, context, input,
+                                                   output);
+        if (id == semanticfx::instrumentId)
+            return semanticFxProvider_->generatePattern(id, profile, context,
+                                                         input, output);
+        if (id == atmos::instrumentId)
+            return atmosProvider_->generatePattern(id, profile, context, input,
+                                                    output);
+        return instrument::ContentStatus::notFound;
     }
 private:
     std::vector<instrument::InstrumentDescriptor> descriptors_;
     std::unique_ptr<instrument::InstrumentProvider> acidProvider_;
+    std::unique_ptr<instrument::InstrumentProvider> leadProvider_;
+    std::unique_ptr<instrument::InstrumentProvider> semanticFxProvider_;
+    std::unique_ptr<instrument::InstrumentProvider> atmosProvider_;
 };
 } // namespace
 
