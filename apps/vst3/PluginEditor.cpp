@@ -280,13 +280,8 @@ void VstEngineAudioProcessorEditor::SequenceCallbacks::onOctaveUp(){processor.se
 void VstEngineAudioProcessorEditor::SequenceCallbacks::onOctaveDown(){processor.sequence().octaveDown();}
 void VstEngineAudioProcessorEditor::SequenceCallbacks::onMutate()
 {
-    const auto hostSeed = static_cast<std::uint32_t>(
-        processor.parameters().getRawParameterValue("rngSeed")->load());
-    const auto slot = processor.instrumentRack().state()[
-        processor.selectedSlotIndex()].slotId;
-    const auto seed = hostSeed ^ static_cast<std::uint32_t>(slot)
-        ^ (0x9e3779b9u * ++mutationOrdinal);
-    processor.sequence().mutateSelected(static_cast<int>(seed));
+    juce::String diagnostic;
+    (void) processor.mutateSelectedPattern(true, diagnostic);
 }
 void VstEngineAudioProcessorEditor::SequenceCallbacks::onClear(){processor.sequence().clearSelected();}
 void VstEngineAudioProcessorEditor::SequenceCallbacks::onSequenceChanged(){processor.publishSequenceForAudio();}
@@ -314,17 +309,20 @@ void VstEngineAudioProcessorEditor::SequencePage::refresh(){
 VstEngineAudioProcessorEditor::SettingsPage::SettingsPage(VstEngineAudioProcessor& p)
 {
     title.setText("HOST / GENERATION",juce::dontSendNotification);description.setText("Deterministic seed; Panic resets all Rack slots.",juce::dontSendNotification);
-    vstengine::ui::styleLabel(title,15,juce::Justification::centredLeft,vstengine::ui::colours::primary);vstengine::ui::styleLabel(description,12,juce::Justification::centredLeft,vstengine::ui::colours::mutedText);
-    midiMode.addItemList({"AUTO","PIANO ROLL","GENERATOR","BOTH"},1);knob(seed);vstengine::ui::styleButton(panic);panic.onClick=[&p]{p.requestPanic();};
-    const std::array<juce::Component*, 5> components {
-        &title, &description, &midiMode, &seed, &panic
+    vstengine::ui::styleLabel(title,15,juce::Justification::centredLeft,vstengine::ui::colours::primary);vstengine::ui::styleLabel(description,12,juce::Justification::centredLeft,vstengine::ui::colours::mutedText);vstengine::ui::styleLabel(generationStatus,12,juce::Justification::centredLeft,vstengine::ui::colours::status);
+    midiMode.addItemList({"AUTO","PIANO ROLL","GENERATOR","BOTH"},1);knob(seed);for(auto*b:{&panic,&generateAll,&mutateAll})vstengine::ui::styleButton(*b);panic.onClick=[&p]{p.requestPanic();};
+    generateAll.onClick=[this,&p]{juce::String d;p.generateAllPatterns(d);generationStatus.setText(d,juce::dontSendNotification);};
+    mutateAll.onClick=[this,&p]{juce::String d;p.mutateAllPatterns(d);generationStatus.setText(d,juce::dontSendNotification);};
+    const std::array<juce::Component*, 8> components {
+        &title, &description, &midiMode, &seed, &panic, &generateAll,
+        &mutateAll, &generationStatus
     };
     for (auto* component : components) addAndMakeVisible(component);
     modeAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters(),"midiMode",midiMode);
     seedAttachment=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.parameters(),"rngSeed",seed);
 }
 void VstEngineAudioProcessorEditor::SettingsPage::paint(juce::Graphics&g){g.fillAll(vstengine::ui::colours::background);}
-void VstEngineAudioProcessorEditor::SettingsPage::resized(){auto a=getLocalBounds().reduced(28);title.setBounds(a.removeFromTop(32));description.setBounds(a.removeFromTop(28));midiMode.setBounds(a.removeFromTop(38).removeFromLeft(220));seed.setBounds(a.removeFromTop(100).removeFromLeft(120));panic.setBounds(a.removeFromTop(42).removeFromLeft(180));}
+void VstEngineAudioProcessorEditor::SettingsPage::resized(){auto a=getLocalBounds().reduced(28);title.setBounds(a.removeFromTop(32));description.setBounds(a.removeFromTop(28));midiMode.setBounds(a.removeFromTop(38).removeFromLeft(220));seed.setBounds(a.removeFromTop(100).removeFromLeft(120));auto actions=a.removeFromTop(42);generateAll.setBounds(actions.removeFromLeft(150).reduced(2));mutateAll.setBounds(actions.removeFromLeft(150).reduced(2));panic.setBounds(actions.removeFromLeft(180).reduced(2));generationStatus.setBounds(a.removeFromTop(30));}
 
 VstEngineAudioProcessorEditor::VstEngineAudioProcessorEditor(VstEngineAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p),

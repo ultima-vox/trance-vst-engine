@@ -1,4 +1,5 @@
 #include "sequence/Sequence.h"
+#include "sequence/PatternAdapter.h"
 #include "sequence/RealtimeSequenceBridge.h"
 #include <cmath>
 #include <cstdint>
@@ -216,6 +217,32 @@ int main()
                     "regenerateBySeed same seed notes");
         }
         require(a[0].gate == false, "regenerateBySeed keeps downbeat free");
+    }
+
+    // Canonical pattern adapter rejects reserved bytes and mutates only range.
+    {
+        Sequence current;
+        current[0].gate = true;
+        current[1].gate = true;
+        auto generated = current;
+        generated[1].noteOffset = 7;
+        generated[5].noteOffset = 12;
+        const auto currentPattern = vstengine::sequence::toPattern(current);
+        const auto generatedPattern = vstengine::sequence::toPattern(generated);
+        VoxPatternV1 mutated { sizeof(VoxPatternV1) };
+        require(vstengine::sequence::mergePatternMutation(currentPattern,
+                    generatedPattern, 0.35f, 1, 1, mutated),
+                "pattern mutation accepts canonical input");
+        require(mutated.steps[1].noteOffset == 7
+                    && mutated.steps[5].noteOffset == 0,
+                "pattern mutation changes selected range only");
+        std::vector<std::byte> encoded;
+        require(vstengine::sequence::encodePattern(mutated, encoded),
+                "mutated pattern encodes");
+        encoded[16 + 13] = std::byte { 1 };
+        VoxPatternV1 rejected { sizeof(VoxPatternV1) };
+        require(!vstengine::sequence::decodePattern(encoded, rejected),
+                "non-zero pattern reserved byte rejected");
     }
 
     // 16: Serialization round-trip (steps, length, timing, selection)

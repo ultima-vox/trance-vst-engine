@@ -3,7 +3,9 @@
 #include "lead/LeadProvider.h"
 #include "semanticfx/SemanticFxProvider.h"
 #include "atmos/AtmosProvider.h"
+#include "bass/BassGenerator.h"
 #include "bass/PsyBassVoice.h"
+#include "sequence/PatternAdapter.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -148,6 +150,13 @@ public:
                 {}, true, true, macro });
         }
         descriptors_.push_back(std::move(bassDescriptor));
+        for (const auto& [id, name] : std::array {
+                 std::pair { "psy-bass", "Psy Bass" },
+                 std::pair { "forest-bass", "Forest Bass" },
+                 std::pair { "dark-bass", "Dark Bass" } })
+            bassContent_.push_back({ std::string(bassInstrumentId), id, name,
+                instrument::ContentKind::generatorProfile, 1, 1,
+                VOX_SEQUENCE_ALL, VOX_PRESET_CLASS_GENERATOR });
         acidProvider_ = acid::createAcidProvider();
         for (const auto& descriptor : acidProvider_->descriptors())
             descriptors_.push_back(descriptor);
@@ -180,6 +189,7 @@ public:
     std::span<const instrument::ContentDescriptor> contentDescriptors(
         std::string_view id) const noexcept override
     {
+        if (id == bassInstrumentId) return bassContent_;
         if (id == acid::instrumentId)
             return acidProvider_->contentDescriptors(id);
         if (id == lead::instrumentId)
@@ -209,6 +219,24 @@ public:
         const VoxGenerationContextV1& context, const VoxPatternV1* input,
         VoxPatternV1& output) const noexcept override
     {
+        if (id == bassInstrumentId) {
+            if (context.structSize != sizeof(VoxGenerationContextV1)
+                || output.structSize != sizeof(VoxPatternV1))
+                return instrument::ContentStatus::invalidArgument;
+            bass::BassProfile bassProfile;
+            if (profile == "psy-bass") bassProfile = bass::BassProfile::psy;
+            else if (profile == "forest-bass")
+                bassProfile = bass::BassProfile::forest;
+            else if (profile == "dark-bass")
+                bassProfile = bass::BassProfile::dark;
+            else return instrument::ContentStatus::notFound;
+            output = sequence::toPattern(bass::BassGenerator::generate(
+                bassProfile, context.globalSeed, context.slotId,
+                bassInstrumentId));
+            return sequence::validPattern(output)
+                ? instrument::ContentStatus::ok
+                : instrument::ContentStatus::invalidArgument;
+        }
         if (id == acid::instrumentId)
             return acidProvider_->generatePattern(id, profile, context, input,
                                                    output);
@@ -225,6 +253,7 @@ public:
     }
 private:
     std::vector<instrument::InstrumentDescriptor> descriptors_;
+    std::vector<instrument::ContentDescriptor> bassContent_;
     std::unique_ptr<instrument::InstrumentProvider> acidProvider_;
     std::unique_ptr<instrument::InstrumentProvider> leadProvider_;
     std::unique_ptr<instrument::InstrumentProvider> semanticFxProvider_;

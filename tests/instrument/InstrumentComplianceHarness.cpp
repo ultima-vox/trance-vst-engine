@@ -1,7 +1,9 @@
 #include "instrument/InstrumentComplianceHarness.h"
+#include "sequence/PatternAdapter.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -151,6 +153,42 @@ InstrumentComplianceReport runInstrumentCompliance(
           "provider must expose InstrumentId exactly once");
     if (descriptor == nullptr) return report;
     validateDescriptor(report, *descriptor);
+
+    if ((descriptor->capabilities
+         & instrument::Capability::patternGenerator) != 0) {
+        const auto content = provider.contentDescriptors(instrumentId);
+        const auto profile = std::find_if(content.begin(), content.end(),
+            [](const auto& item) {
+                return item.kind == instrument::ContentKind::generatorProfile;
+            });
+        check(report, profile != content.end(),
+              "patternGenerator capability has no generator profile");
+        if (profile != content.end()) {
+            VoxGenerationContextV1 context {};
+            context.structSize = sizeof(context);
+            context.globalSeed = 0x13579bdu;
+            context.slotId = instrument::initialSlotId(7);
+            std::snprintf(context.instrumentId.bytes,
+                          sizeof(context.instrumentId.bytes), "%.*s",
+                          static_cast<int>(instrumentId.size()),
+                          instrumentId.data());
+            VoxPatternV1 first { sizeof(VoxPatternV1) };
+            VoxPatternV1 second { sizeof(VoxPatternV1) };
+            check(report, provider.generatePattern(instrumentId, profile->id,
+                    context, nullptr, first) == instrument::ContentStatus::ok
+                    && sequence::validPattern(first),
+                  "advertised generator profile failed");
+            check(report, provider.generatePattern(instrumentId, profile->id,
+                    context, nullptr, second) == instrument::ContentStatus::ok,
+                  "generator repeat failed");
+            std::vector<std::byte> firstBytes;
+            std::vector<std::byte> secondBytes;
+            check(report, sequence::encodePattern(first, firstBytes)
+                    && sequence::encodePattern(second, secondBytes)
+                    && firstBytes == secondBytes,
+                  "generator is not deterministic");
+        }
+    }
 
     auto create = [&]() {
         return provider.create(instrumentId,

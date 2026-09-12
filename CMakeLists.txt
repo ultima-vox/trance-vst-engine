@@ -79,7 +79,8 @@ target_link_libraries(vst_midi
 
 # bass: psy-bass DSP voice (oscillator/pitch env/amp env/filter/drive/glide).
 add_library(vst_bass STATIC
-  libs/bass/PsyBassVoice.cpp libs/bass/PsyBassVoice.h)
+  libs/bass/PsyBassVoice.cpp libs/bass/PsyBassVoice.h
+  libs/bass/BassGenerator.cpp libs/bass/BassGenerator.h)
 target_include_directories(vst_bass PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_bass PUBLIC
   juce::juce_audio_basics juce::juce_audio_processors)
@@ -133,7 +134,7 @@ add_library(vst_modules STATIC
   libs/modules/BuiltInProvider.cpp libs/modules/BuiltInProvider.h)
 target_include_directories(vst_modules PUBLIC ${VST_LIBS_DIR})
 target_link_libraries(vst_modules PUBLIC
-  vst_instrument vst_bass vst_acid vst_lead vst_semantic_fx vst_atmos
+  vst_instrument vst_sequence vst_bass vst_acid vst_lead vst_semantic_fx vst_atmos
   juce::juce_audio_basics)
 
 # preset: preset format, filesystem, factory/user distinction, migration.
