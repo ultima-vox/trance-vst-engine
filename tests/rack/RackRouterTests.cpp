@@ -151,6 +151,60 @@ int main()
         REQUIRE((*fullOutput)[0].size == 0,
                 "dropped audition NoteOn never commits phantom ownership");
     }
+    {
+        std::array<rack::ProcessSlotControls, instrument::maxSlots> generatedSlots {};
+        generatedSlots[0].slotId = instrument::initialSlotId(0);
+        generatedSlots[0].routing = { rack::RouteMode::off, 1, 0, 127, 1, 127, 12 };
+        generatedSlots[1].slotId = instrument::initialSlotId(1);
+        generatedSlots[1].routing = { rack::RouteMode::channel, 16, 0, 127, 1, 127, -12 };
+        auto generatedRouter = std::make_unique<rack::RackRouter>();
+        auto generatedOutput = std::make_unique<std::array<
+            rack::RackRouter::DestinationBuffer, instrument::maxSlots>>();
+        generatedRouter->route(std::span<const VoxMidiEventV1> {},
+                               generatedSlots, *generatedOutput);
+        const std::array firstOn { note(0x90, 60) };
+        const std::array secondOn { note(0x90, 60) };
+        const std::array streams {
+            rack::RackRouter::GeneratedSlotEvents { generatedSlots[0].slotId,
+                                                    firstOn },
+            rack::RackRouter::GeneratedSlotEvents { generatedSlots[1].slotId,
+                                                    secondOn }
+        };
+        generatedRouter->routeGenerated(streams, generatedSlots, *generatedOutput);
+        REQUIRE((*generatedOutput)[0].size == 1
+                    && (*generatedOutput)[0].events[0].data[1] == 60
+                    && (*generatedOutput)[1].size == 1
+                    && (*generatedOutput)[1].events[0].data[1] == 60,
+                "generated streams target SlotId and bypass route transpose/off");
+        for (auto& destination : *generatedOutput) destination.clear();
+        const std::array firstOff { note(0x80, 60, 0) };
+        const std::array firstOffStream {
+            rack::RackRouter::GeneratedSlotEvents { generatedSlots[0].slotId,
+                                                    firstOff }
+        };
+        generatedRouter->routeGenerated(firstOffStream, generatedSlots,
+                                        *generatedOutput);
+        REQUIRE((*generatedOutput)[0].size == 1 && (*generatedOutput)[1].size == 0,
+                "same-pitch generated ownership isolated per source SlotId");
+        for (auto& destination : *generatedOutput) destination.clear();
+        const std::array secondOffStream {
+            rack::RackRouter::GeneratedSlotEvents { generatedSlots[1].slotId,
+                                                    firstOff }
+        };
+        generatedRouter->routeGenerated(secondOffStream, generatedSlots,
+                                        *generatedOutput);
+        REQUIRE((*generatedOutput)[0].size == 0 && (*generatedOutput)[1].size == 1,
+                "second generated owner survives first source NoteOff");
+    }
+    {
+        rack::RackRouter::DestinationBuffer ordered;
+        auto late = note(0x90, 60); late.sampleOffset = 100;
+        auto early = note(0x80, 60, 0); early.sampleOffset = 0;
+        ordered.push(late); ordered.push(early); ordered.sortBySampleOffset();
+        REQUIRE(ordered.events[0].sampleOffset == 0
+                    && ordered.events[1].sampleOffset == 100,
+                "mixed MIDI sources stable-sort before DSP");
+    }
     std::cout << "Rack router tests passed (" << run << ")\n";
     return EXIT_SUCCESS;
 }

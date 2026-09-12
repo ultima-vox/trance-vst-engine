@@ -322,10 +322,23 @@ void GeneratedNoteScheduler::triggerNote(
     // playback stream (previous step's note or previous ratchet sub-note) with
     // a different pitch. The synth voice then glides from its current pitch to
     // this note's pitch over slideDuration * stepDuration.
-    if (step.slideDuration > 0.0f && lastGeneratedNote >= 0
-        && lastGeneratedNote != heldNote) {
-        queueGlideRequest(heldNote, static_cast<float>(
-            step.slideDuration * samplesPerStep / sampleRate));
+    const bool sliding = step.slideDuration > 0.0f && lastGeneratedNote >= 0
+        && lastGeneratedNote != heldNote;
+    if (sliding) {
+        const auto seconds = static_cast<float>(
+            step.slideDuration * samplesPerStep / sampleRate);
+        queueGlideRequest(heldNote, seconds);
+        // Standard MIDI portamento sideband keeps frozen note-event ABI and
+        // reaches any compliant module. CC5 maps 0..2 seconds quadratically.
+        const auto normalized = std::sqrt(std::clamp(seconds / 2.0f, 0.0f, 1.0f));
+        midi.addEvent(juce::MidiMessage::controllerEvent(
+            heldChannel, 65, 127), offset);
+        midi.addEvent(juce::MidiMessage::controllerEvent(
+            heldChannel, 5, juce::jlimit(0, 127,
+                static_cast<int>(std::lround(normalized * 127.0f)))), offset);
+    } else {
+        midi.addEvent(juce::MidiMessage::controllerEvent(
+            heldChannel, 65, 0), offset);
     }
 
     midi.addEvent(

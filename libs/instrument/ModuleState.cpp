@@ -18,8 +18,9 @@ PreparedModuleState prepareModuleState(const PersistentModuleState& state,
     if (!prepared.resolution)
         return prepared;
     const auto& descriptor = *prepared.resolution.descriptor;
-    if ((!state.providerId.empty() && state.providerId != descriptor.providerId)
-        || (state.instrumentVersion != 0
+    // InstrumentId is durable identity; providerId records last resolution
+    // source only. A compatible instrument may move between providers.
+    if ((state.instrumentVersion != 0
             && state.instrumentVersion != descriptor.instrumentVersion)
         || (state.contentVersion != 0
             && state.contentVersion != descriptor.contentVersion)) {

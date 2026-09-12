@@ -1,4 +1,5 @@
 #include "rack/Rack.h"
+#include "rack/RackState.h"
 #include <algorithm>
 #include <cmath>
 #include <thread>
@@ -77,7 +78,7 @@ bool Rack::buildSlot(std::size_t index, const PersistentSlotState& state,
                      instrument::ResourceResolver* resources, SlotRuntime& target,
                      RuntimeSlotState& runtimeState, std::string& diagnostic)
 {
-    if (index >= state_.size() || state.schemaVersion != 1
+    if (index >= state_.size() || state.schemaVersion != 2
         || state.slotId == instrument::invalidSlotId || !valid(state.routing)
         || !std::isfinite(state.level) || !std::isfinite(state.pan)
         || state.level < 0.0f || state.level > 2.0f
@@ -87,6 +88,11 @@ bool Rack::buildSlot(std::size_t index, const PersistentSlotState& state,
     }
     if (state.instrumentId.empty()) {
         runtimeState.resolution = instrument::ResolutionStatus::missingModule;
+        return true;
+    }
+    if (state.patternSchemaVersion > VOX_PATTERN_SCHEMA_V1) {
+        runtimeState.resolution = instrument::ResolutionStatus::incompatibleSchema;
+        diagnostic = "instrument pattern schema is newer than host";
         return true;
     }
     instrument::PersistentModuleState moduleState {
@@ -177,6 +183,8 @@ bool Rack::loadModule(std::size_t index, std::string_view instrumentId,
     auto replacement = state_[index];
     replacement.instrumentId = instrumentId;
     replacement.modulePayload.clear();
+    replacement.patternSchemaVersion = VOX_PATTERN_SCHEMA_V1;
+    replacement.patternPayload.clear();
     replacement.resolvedProviderId.clear();
     replacement.instrumentVersion = 0;
     replacement.instrumentStateVersion = instrument::stateSchemaVersion;
@@ -227,6 +235,85 @@ bool Rack::loadModule(std::size_t index, std::string_view instrumentId,
     return true;
 }
 
+bool Rack::applySoundPreset(std::size_t index, std::string_view presetId,
+                            instrument::ResourceResolver* resources,
+                            std::string& diagnostic)
+{
+    if (index >= state_.size()) {
+        diagnostic = "slot index out of range";
+        return false;
+    }
+    auto replacement = state_[index];
+    const auto resolution = registry_.resolve(replacement.instrumentId);
+    if (!resolution || resolution.provider == nullptr) {
+        diagnostic = resolution.diagnostic;
+        return false;
+    }
+    const instrument::ContentDescriptor* content = nullptr;
+    for (const auto& candidate : resolution.provider->contentDescriptors(
+             replacement.instrumentId))
+        if (candidate.kind == instrument::ContentKind::soundPreset
+            && candidate.id == presetId) {
+            content = &candidate;
+            break;
+        }
+    if (content == nullptr) {
+        diagnostic = "sound preset not found";
+        return false;
+    }
+    SlotRuntime prepared;
+    RuntimeSlotState preparedState;
+    if (!buildSlot(index, replacement, resources, prepared, preparedState,
+                   diagnostic)
+        || !prepared.instance)
+        return false;
+    const auto status = resolution.provider->applySoundPreset(
+        replacement.instrumentId, presetId, *prepared.instance);
+    if (status != instrument::ContentStatus::ok) {
+        diagnostic = "sound preset incompatible";
+        return false;
+    }
+    replacement.modulePayload.resize(resolution.descriptor->budget.maxStateBytes);
+    std::uint32_t written {};
+    if (!prepared.instance->saveState(replacement.modulePayload, written)
+        || written > replacement.modulePayload.size()) {
+        diagnostic = "sound preset state exceeds budget";
+        return false;
+    }
+    replacement.modulePayload.resize(written);
+    replacement.soundPreset = std::string(presetId);
+    for (std::size_t macro = 0; macro < replacement.macros.size(); ++macro)
+        if ((content->macroValueMask & (1u << macro)) != 0)
+            replacement.macros[macro] = std::clamp(
+                content->macroValues[macro], 0.0f, 1.0f);
+
+    beginExclusive();
+    if (runtime_[index].instance) runtime_[index].instance->reset();
+    router_.forgetSlot(replacement.slotId);
+    state_[index] = std::move(replacement);
+    runtime_[index] = std::move(prepared);
+    runtimeState_[index] = preparedState;
+    routed_[index].clear();
+    endExclusive();
+    diagnostic.clear();
+    return true;
+}
+
+bool Rack::updatePatternState(std::size_t index, std::string presetId,
+                              std::uint32_t patternSchema,
+                              std::vector<std::byte> payload)
+{
+    if (index >= state_.size() || patternSchema == 0
+        || payload.size() > state::maxPatternPayloadBytes)
+        return false;
+    beginExclusive();
+    state_[index].patternPreset = std::move(presetId);
+    state_[index].patternSchemaVersion = patternSchema;
+    state_[index].patternPayload = std::move(payload);
+    endExclusive();
+    return true;
+}
+
 void Rack::setMacro(std::size_t slot, std::size_t macro, float value) noexcept
 {
     if (slot >= state_.size() || macro >= instrument::macrosPerSlot
@@ -261,7 +348,7 @@ void Rack::process(std::span<float*> outputs, std::uint32_t sampleCount,
                    std::span<const VoxMidiEventV1> audition,
                    instrument::SlotId selectedSlot,
                    std::span<const ProcessSlotControls> controls,
-                   std::span<const VoxMidiEventV1> generated) noexcept
+                   std::span<const RackRouter::GeneratedSlotEvents> generated) noexcept
 {
     if (sampleCount > spec_.maximumBlockSize || outputs.empty()
         || outputs.size() > 2 || mutationGate_.load(std::memory_order_acquire))
@@ -278,7 +365,9 @@ void Rack::process(std::span<float*> outputs, std::uint32_t sampleCount,
     }
     router_.route(midi, controls, routed_);
     router_.routeAudition(audition, selectedSlot, controls, routed_);
-    router_.routeAudition(generated, selectedSlot, controls, routed_, true);
+    router_.routeGenerated(generated, controls, routed_);
+    for (auto& destination : routed_)
+        destination.sortBySampleOffset();
     const bool anySolo = std::any_of(controls.begin(), controls.end(),
                                      [](const auto& slot) { return slot.solo; });
     for (std::size_t i = 0; i < state_.size(); ++i) {

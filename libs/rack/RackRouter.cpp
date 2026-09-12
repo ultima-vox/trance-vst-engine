@@ -58,13 +58,28 @@ bool RackRouter::DestinationBuffer::push(VoxMidiEventV1 event) noexcept
     return true;
 }
 
+void RackRouter::DestinationBuffer::sortBySampleOffset() noexcept
+{
+    // Stable bounded insertion sort. Typical MIDI counts are tiny; no heap.
+    for (std::size_t i = 1; i < size; ++i) {
+        const auto value = events[i];
+        auto position = i;
+        while (position > 0
+               && events[position - 1].sampleOffset > value.sampleOffset) {
+            events[position] = events[position - 1];
+            --position;
+        }
+        events[position] = value;
+    }
+}
+
 void RackRouter::reset() noexcept
 {
     for (auto& channel : ownership_)
         for (auto& note : channel)
             note.size = 0;
     for (auto& owner : auditionOwnership_) owner = {};
-    for (auto& owner : generatedOwnership_) owner = {};
+    for (auto& stream : generatedOwnership_) stream = {};
 }
 
 void RackRouter::forgetSlot(instrument::SlotId slotId) noexcept
@@ -79,8 +94,11 @@ void RackRouter::forgetSlot(instrument::SlotId slotId) noexcept
         }
     for (auto& owner : auditionOwnership_)
         if (owner.slotId == slotId) owner = {};
-    for (auto& owner : generatedOwnership_)
-        if (owner.slotId == slotId) owner = {};
+    for (auto& stream : generatedOwnership_) {
+        if (stream.sourceSlotId == slotId) stream = {};
+        for (auto& owner : stream.notes)
+            if (owner.slotId == slotId) owner = {};
+    }
 }
 
 void RackRouter::routeAudition(
@@ -89,7 +107,8 @@ void RackRouter::routeAudition(
     std::array<DestinationBuffer, instrument::maxSlots>& output,
     bool generated) noexcept
 {
-    auto& ownership = generated ? generatedOwnership_ : auditionOwnership_;
+    if (generated) return;
+    auto& ownership = auditionOwnership_;
     for (const auto& source : input) {
         if (source.size < 2) continue;
         const auto note = source.data[1];
@@ -123,6 +142,74 @@ void RackRouter::routeAudition(
                 ownership[note] = { selectedSlot, note };
             else
                 ownership[note] = {};
+        }
+    }
+}
+
+void RackRouter::routeGenerated(
+    std::span<const GeneratedSlotEvents> input,
+    std::span<const ProcessSlotControls> slots,
+    std::array<DestinationBuffer, instrument::maxSlots>& output) noexcept
+{
+    for (const auto& stream : input) {
+        const int targetIndex = findSlot(slots, stream.slotId);
+        if (targetIndex < 0) continue;
+        GeneratedDomain* domain = nullptr;
+        for (auto& candidate : generatedOwnership_)
+            if (candidate.sourceSlotId == stream.slotId) {
+                domain = &candidate;
+                break;
+            }
+        if (domain == nullptr)
+            for (auto& candidate : generatedOwnership_)
+                if (candidate.sourceSlotId == instrument::invalidSlotId) {
+                    candidate.sourceSlotId = stream.slotId;
+                    domain = &candidate;
+                    break;
+                }
+        if (domain == nullptr) continue;
+        auto& ownership = domain->notes;
+        for (const auto& source : stream.events) {
+            if (source.size == 0) continue;
+            const auto note = source.size >= 2 ? source.data[1] : 0;
+            if (isNoteOff(source)) {
+                const auto owner = ownership[note];
+                const int ownerIndex = findSlot(slots, owner.slotId);
+                if (ownerIndex >= 0) {
+                    auto event = source;
+                    event.data[1] = owner.transposedNote;
+                    if (output[static_cast<std::size_t>(ownerIndex)].push(event))
+                        ownership[note] = {};
+                } else {
+                    ownership[note] = {};
+                }
+                continue;
+            }
+            if (isNoteOn(source)) {
+                const auto previous = ownership[note];
+                const int previousIndex = findSlot(slots, previous.slotId);
+                if (previousIndex >= 0) {
+                    auto off = source;
+                    off.data[0] = static_cast<std::uint8_t>(
+                        0x80 | (source.data[0] & 0x0f));
+                    off.data[1] = previous.transposedNote;
+                    off.data[2] = 0;
+                    if (!output[static_cast<std::size_t>(previousIndex)].push(off))
+                        continue;
+                }
+                ownership[note] = {};
+                if (!slots[static_cast<std::size_t>(targetIndex)].enabled)
+                    continue;
+                auto event = source;
+                // Generated pattern pitch is already canonical root + offset.
+                // External MIDI transpose/zones do not alter internal content.
+                event.data[1] = note;
+                if (output[static_cast<std::size_t>(targetIndex)].push(event))
+                    ownership[note] = { stream.slotId, event.data[1] };
+                continue;
+            }
+            if (slots[static_cast<std::size_t>(targetIndex)].enabled)
+                output[static_cast<std::size_t>(targetIndex)].push(source);
         }
     }
 }

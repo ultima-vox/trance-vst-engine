@@ -16,13 +16,18 @@ public:
         instrument::ResourceResolver*, std::string& diagnostic);
     bool loadModule(std::size_t slotIndex, std::string_view instrumentId,
                     instrument::ResourceResolver*, std::string& diagnostic);
+    bool applySoundPreset(std::size_t slotIndex, std::string_view presetId,
+                          instrument::ResourceResolver*, std::string& diagnostic);
+    bool updatePatternState(std::size_t slotIndex, std::string presetId,
+                            std::uint32_t schemaVersion,
+                            std::vector<std::byte> payload);
     void process(std::span<float*> outputs, std::uint32_t sampleCount,
                  std::span<const VoxMidiEventV1> midi, double bpm,
                  double ppqPosition, bool playing,
                  std::span<const VoxMidiEventV1> audition = {},
                  instrument::SlotId selectedSlot = instrument::invalidSlotId,
                  std::span<const ProcessSlotControls> controls = {},
-                 std::span<const VoxMidiEventV1> generated = {}) noexcept;
+                 std::span<const RackRouter::GeneratedSlotEvents> generated = {}) noexcept;
     void setMacro(std::size_t slotIndex, std::size_t macroIndex,
                   float value) noexcept;
     void updateControls(std::size_t slotIndex, Routing, bool enabled,

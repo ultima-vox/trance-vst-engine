@@ -18,7 +18,7 @@ struct Routing {
 };
 
 struct PersistentSlotState {
-    std::uint32_t schemaVersion { 1 };
+    std::uint32_t schemaVersion { 2 };
     instrument::SlotId slotId { instrument::invalidSlotId };
     instrument::InstrumentId instrumentId;
     std::string resolvedProviderId;
@@ -35,6 +35,8 @@ struct PersistentSlotState {
     std::uint32_t outputDestination {}; // 0 = Main Out; future buses stay separate.
     std::string soundPreset;
     std::string patternPreset;
+    std::uint32_t patternSchemaVersion { VOX_PATTERN_SCHEMA_V1 };
+    std::vector<std::byte> patternPayload;
     std::array<float, instrument::macrosPerSlot> macros {};
     std::array<instrument::ParameterId, instrument::macrosPerSlot>
         macroAssignments {};
