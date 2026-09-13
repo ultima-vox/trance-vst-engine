@@ -1,4 +1,5 @@
 #include "sequence/PatternAdapter.h"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 
@@ -151,6 +152,9 @@ bool decodePattern(std::span<const std::byte> payload,
         step.velocity = std::bit_cast<float>(get32(in));
         step.probability = std::bit_cast<float>(get32(in));
         step.ratchetCount = std::to_integer<std::uint8_t>(*in++);
+        if (in[0] != std::byte {} || in[1] != std::byte {}
+            || in[2] != std::byte {})
+            return false;
         in += 3;
         step.slideDuration = std::bit_cast<float>(get32(in));
         step.gateWidth = std::bit_cast<float>(get32(in));
@@ -158,5 +162,82 @@ bool decodePattern(std::span<const std::byte> payload,
     if (!validPattern(candidate)) return false;
     destination = candidate;
     return true;
+}
+
+std::uint32_t patternFingerprint(const VoxPatternV1& pattern) noexcept
+{
+    if (!validPattern(pattern)) return 0;
+    std::uint32_t hash = 2166136261u;
+    auto mix = [&hash](std::uint32_t value) noexcept {
+        for (int shift = 0; shift < 32; shift += 8) {
+            hash ^= static_cast<std::uint8_t>(value >> shift);
+            hash *= 16777619u;
+        }
+    };
+    mix(pattern.stepCount);
+    mix(pattern.timingMode);
+    for (std::uint32_t index = 0; index < pattern.stepCount; ++index) {
+        const auto& step = pattern.steps[index];
+        mix(static_cast<std::uint16_t>(step.noteOffset));
+        mix(step.gate | (static_cast<std::uint32_t>(step.accent) << 8)
+            | (static_cast<std::uint32_t>(step.ratchetCount) << 16));
+        mix(std::bit_cast<std::uint32_t>(step.velocity));
+        mix(std::bit_cast<std::uint32_t>(step.probability));
+        mix(std::bit_cast<std::uint32_t>(step.slideDuration));
+        mix(std::bit_cast<std::uint32_t>(step.gateWidth));
+    }
+    return hash;
+}
+
+bool mergePatternMutation(const VoxPatternV1& current,
+                          const VoxPatternV1& generated, float amount,
+                          int selectedStart, int selectedEnd,
+                          VoxPatternV1& destination) noexcept
+{
+    if (!validPattern(current) || !validPattern(generated)
+        || current.stepCount != generated.stepCount
+        || current.timingMode != generated.timingMode
+        || !std::isfinite(amount))
+        return false;
+    const auto generatedCopy = generated;
+    amount = std::clamp(amount, 0.0f, 1.0f);
+    const bool selectedOnly = selectedStart >= 0 && selectedEnd >= selectedStart;
+    auto random = patternFingerprint(current) ^ patternFingerprint(generatedCopy)
+        ^ 0x9e3779b9u;
+    destination = current;
+    auto sameStep = [](const VoxPatternStepV1& left,
+                       const VoxPatternStepV1& right) noexcept {
+        return left.noteOffset == right.noteOffset && left.gate == right.gate
+            && left.accent == right.accent && left.velocity == right.velocity
+            && left.probability == right.probability
+            && left.ratchetCount == right.ratchetCount
+            && left.slideDuration == right.slideDuration
+            && left.gateWidth == right.gateWidth;
+    };
+    int fallback = -1;
+    bool changed = false;
+    for (std::uint32_t index = 0; index < current.stepCount; ++index) {
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        const bool selected = !selectedOnly
+            || (static_cast<int>(index) >= selectedStart
+                && static_cast<int>(index) <= selectedEnd);
+        const float choice = static_cast<float>(random >> 8)
+            * (1.0f / 16777216.0f);
+        if (selected
+            && !sameStep(current.steps[index], generatedCopy.steps[index])
+            && fallback < 0)
+            fallback = static_cast<int>(index);
+        if (selected && choice < amount) {
+            destination.steps[index] = generatedCopy.steps[index];
+            changed = changed || !sameStep(current.steps[index],
+                                           generatedCopy.steps[index]);
+        }
+    }
+    if (amount > 0.0f && !changed && fallback >= 0)
+        destination.steps[static_cast<std::size_t>(fallback)] =
+            generatedCopy.steps[static_cast<std::size_t>(fallback)];
+    return validPattern(destination);
 }
 } // namespace vstengine::sequence

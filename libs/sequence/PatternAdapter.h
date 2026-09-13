@@ -17,4 +17,10 @@ inline constexpr std::size_t maximumEncodedPatternBytes =
                                  std::vector<std::byte>& destination);
 [[nodiscard]] bool decodePattern(std::span<const std::byte>,
                                  VoxPatternV1&) noexcept;
+[[nodiscard]] std::uint32_t patternFingerprint(
+    const VoxPatternV1&) noexcept;
+[[nodiscard]] bool mergePatternMutation(
+    const VoxPatternV1& current, const VoxPatternV1& generated,
+    float amount, int selectedStart, int selectedEnd,
+    VoxPatternV1& destination) noexcept;
 } // namespace vstengine::sequence

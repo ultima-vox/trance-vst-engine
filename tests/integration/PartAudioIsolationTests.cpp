@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "instrument/HostParameterSchema.h"
+#include "modules/BuiltInProvider.h"
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -53,6 +54,16 @@ double renderAudition(VstEngineAudioProcessor& processor, std::size_t slot)
     processor.keyboardState().noteOff(1, 48, 1.0f);
     return energy(audio);
 }
+bool sameStep(const vstengine::sequence::Step& left,
+              const vstengine::sequence::Step& right)
+{
+    return left.gate == right.gate && left.noteOffset == right.noteOffset
+        && left.velocity == right.velocity && left.accent == right.accent
+        && left.probability == right.probability
+        && left.ratchetCount == right.ratchetCount
+        && left.slideDuration == right.slideDuration
+        && left.gateWidth == right.gateWidth;
+}
 } // namespace
 
 int main()
@@ -93,6 +104,58 @@ int main()
     processor->instrumentRack().reset();
     require(renderAudition(*processor, 0) < silent, "slot mute blocks audition");
     setPlain(*processor, "slot01Mute", 0.0f);
+
+    juce::String generationDiagnostic;
+    require(processor->loadSlotInstrument(2,
+                vstengine::modules::leadInstrumentId, generationDiagnostic)
+            && processor->loadSlotInstrument(3,
+                vstengine::modules::semanticFxInstrumentId,
+                generationDiagnostic)
+            && processor->loadSlotInstrument(4,
+                vstengine::modules::atmosInstrumentId, generationDiagnostic),
+            "remaining production generators load into Rack");
+    setPlain(*processor, "rngSeed", 9001.0f);
+    require(processor->generateAllPatterns(generationDiagnostic),
+            "global style generator coordinates unlocked instruments");
+    for (std::size_t slot = 0; slot < 5; ++slot)
+        require(!processor->instrumentRack().state()[slot].patternPayload.empty(),
+                "global generation commits each production slot");
+
+    const auto lockedPattern = processor->instrumentRack().state()[1].patternPayload;
+    setPlain(*processor, "slot02Lock", 1.0f);
+    setPlain(*processor, "rngSeed", 9002.0f);
+    require(processor->generateAllPatterns(generationDiagnostic),
+            "global regenerate succeeds with locked slot");
+    require(processor->instrumentRack().state()[1].patternPayload
+                == lockedPattern,
+            "global regenerate preserves locked slot exactly");
+
+    processor->selectSlot(0);
+    processor->sequence().setSelectedRange(0, 7);
+    const auto beforeSelectedMutation = processor->sequence().copy();
+    require(processor->mutateSelectedPattern(true, generationDiagnostic),
+            "instrument-owned selected mutation succeeds");
+    bool selectedChanged = false;
+    for (int step = 0; step < processor->sequence().size(); ++step) {
+        if (step <= 7)
+            selectedChanged = selectedChanged
+                || !sameStep(processor->sequence()[step],
+                             beforeSelectedMutation[step]);
+        else
+            require(sameStep(processor->sequence()[step],
+                             beforeSelectedMutation[step]),
+                    "Mutate Selected preserves unselected steps");
+    }
+    require(selectedChanged, "Mutate Selected changes selected musical data");
+
+    const auto lockedBeforeMutate = processor->instrumentRack().state()[1]
+        .patternPayload;
+    require(processor->mutateAllPatterns(generationDiagnostic),
+            "global mutate coordinates unlocked instruments");
+    require(processor->instrumentRack().state()[1].patternPayload
+                == lockedBeforeMutate,
+            "global mutate preserves locked slot exactly");
+    setPlain(*processor, "slot02Lock", 0.0f);
 
     processor->sequence()[3].gate = true;
     processor->sequence()[3].noteOffset = 7;

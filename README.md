@@ -23,6 +23,8 @@ Early vertical slice (0.1.x). The current target is a reliable VST3 instrument i
   Sample & Hold, Random, Velocity, mod wheel, aftertouch and canonical restore
 - Post-rack fixed internal FX chain: distortion, wavefolder, phaser, flanger,
   chorus, bitcrusher, delay and reverb; bypass and Full/project state restore
+- Global provider-driven Generate All / Mutate All orchestration; locked slots
+  remain byte-identical, and Mutate Selected preserves unselected steps
 - Missing/incompatible module recovery without silent instrument substitution
 - Versioned deterministic Rack/project state and concurrent host-state snapshots
 - Native JUCE editor with selected-slot audition and capability-driven controls

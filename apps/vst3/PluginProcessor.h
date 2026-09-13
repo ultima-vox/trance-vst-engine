@@ -117,6 +117,10 @@ public:
     [[nodiscard]] std::uint32_t selectedSequenceFieldMask() const noexcept;
     bool applySelectedSoundPreset(std::string_view, juce::String& diagnostic);
     bool generateSelectedPattern(std::string_view, juce::String& diagnostic);
+    bool mutateSelectedPattern(bool selectedStepsOnly,
+                               juce::String& diagnostic);
+    bool generateAllPatterns(juce::String& diagnostic);
+    bool mutateAllPatterns(juce::String& diagnostic);
     [[nodiscard]] int nextFreeChannel() const noexcept;
 
 private:
@@ -162,6 +166,15 @@ private:
     [[nodiscard]] juce::ValueTree captureEffectsState() const;
     bool prepareEffectsState(const juce::ValueTree&,
                              vstengine::effects::EffectsChain&) const;
+    [[nodiscard]] std::string generatorProfileForSlot(
+        std::size_t slotIndex) const;
+    bool prepareGeneratedPattern(
+        std::size_t slotIndex, std::string_view profileId,
+        const VoxPatternV1* input, float mutationAmount,
+        int selectedStart, int selectedEnd,
+        vstengine::sequence::Sequence& sequence,
+        std::vector<std::byte>& encoded, juce::String& diagnostic) const;
+    bool runGlobalPatternOperation(bool mutate, juce::String& diagnostic);
     bool restoreSlotPatterns(const std::array<vstengine::rack::PersistentSlotState,
         vstengine::instrument::maxSlots>&, bool allowEmpty) noexcept;
     std::size_t convertMidi(const juce::MidiBuffer&,
@@ -197,6 +210,7 @@ private:
     std::uint32_t currentMaximumBlockSize { 512 };
     bool wasTransportPlaying { false };
     std::atomic<bool> panicRequested { false };
+    std::atomic<double> latestHostBpm { 145.0 };
 
     // Preallocated scratch buffer for keyboard MIDI. processBlock() reuses it
     // every block (clear, processNextMidiBuffer, merge) so the realtime

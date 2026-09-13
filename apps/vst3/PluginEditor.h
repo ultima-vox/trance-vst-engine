@@ -67,7 +67,6 @@ private:
         VstEngineAudioProcessor& processor;
         vstengine::sequence::Sequence clipboard;
         bool copied {};
-        std::uint32_t mutationOrdinal {};
     };
 
     class SequencePage final : public juce::Component {
@@ -90,10 +89,12 @@ private:
         void paint(juce::Graphics&) override;
         void resized() override;
     private:
-        juce::Label title, description;
+        juce::Label title, description, generationStatus;
         juce::ComboBox midiMode;
         juce::Slider seed;
         juce::TextButton panic { "GLOBAL PANIC" };
+        juce::TextButton generateAll { "Generate All" };
+        juce::TextButton mutateAll { "Mutate All" };
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> seedAttachment;
     };

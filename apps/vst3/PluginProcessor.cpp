@@ -374,6 +374,7 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 havePpq = true;
             }
         }
+    latestHostBpm.store(bpm, std::memory_order_relaxed);
     if (wasTransportPlaying && !playing) {
         rack.reset();
         for (auto& scheduler : patternRuntime->schedulers)
@@ -1075,38 +1076,21 @@ bool VstEngineAudioProcessor::generateSelectedPattern(
     std::string_view profileId, juce::String& diagnostic)
 {
     const auto index = selectedSlotIndex();
-    const auto& slot = rack.state()[index];
-    const auto resolution = instrumentRegistry.resolve(slot.instrumentId);
-    if (!resolution || resolution.provider == nullptr) {
-        diagnostic = resolution.diagnostic;
+    if (rackParameterRefs[index].locked->load() >= 0.5f) {
+        diagnostic = "Slot locked";
         return false;
     }
-    suspendProcessing(true);
-    VoxGenerationContextV1 context {};
-    context.structSize = sizeof(context);
-    context.globalSeed = static_cast<std::uint32_t>(
-        apvts.getRawParameterValue("rngSeed")->load());
-    context.slotId = slot.slotId;
-    std::snprintf(context.instrumentId.bytes, sizeof(context.instrumentId.bytes),
-                  "%s", slot.instrumentId.c_str());
-    std::snprintf(context.styleId.bytes, sizeof(context.styleId.bytes), "%.*s",
-                  static_cast<int>(profileId.size()), profileId.data());
-    context.rootNote = static_cast<std::int32_t>(
-        apvts.getRawParameterValue("rootNote")->load());
-    context.bpm = 145.0;
-    VoxPatternV1 pattern { sizeof(VoxPatternV1) };
-    const auto status = resolution.provider->generatePattern(
-        slot.instrumentId, profileId, context, nullptr, pattern);
     vstengine::sequence::Sequence candidate;
     std::vector<std::byte> encoded;
-    if (status != vstengine::instrument::ContentStatus::ok
-        || !vstengine::sequence::fromPattern(pattern, candidate)
-        || !vstengine::sequence::encodePattern(pattern, encoded)
-        || !rack.updatePatternState(index, std::string(profileId),
-                                    VOX_PATTERN_SCHEMA_V1,
-                                    std::move(encoded))) {
+    if (!prepareGeneratedPattern(index, profileId, nullptr, 0.0f, -1, -1,
+                                 candidate, encoded, diagnostic))
+        return false;
+    suspendProcessing(true);
+    if (!rack.updatePatternState(index, std::string(profileId),
+                                 VOX_PATTERN_SCHEMA_V1,
+                                 std::move(encoded))) {
         suspendProcessing(false);
-        diagnostic = "pattern generation failed";
+        diagnostic = "pattern state commit failed";
         return false;
     }
     patternRuntime->slotSequences[index] = std::move(candidate);
@@ -1115,6 +1099,171 @@ bool VstEngineAudioProcessor::generateSelectedPattern(
     suspendProcessing(false);
     diagnostic.clear();
     return true;
+}
+
+std::string VstEngineAudioProcessor::generatorProfileForSlot(
+    std::size_t index) const
+{
+    if (index >= vstengine::instrument::maxSlots) return {};
+    const auto& slot = rack.state()[index];
+    const auto resolution = instrumentRegistry.resolve(slot.instrumentId);
+    if (!resolution || resolution.provider == nullptr) return {};
+    std::string first;
+    for (const auto& content :
+         resolution.provider->contentDescriptors(slot.instrumentId)) {
+        if (content.kind != vstengine::instrument::ContentKind::generatorProfile)
+            continue;
+        if (first.empty()) first = content.id;
+        if (!slot.patternPreset.empty()
+            && content.id == slot.patternPreset)
+            return content.id;
+    }
+    return first;
+}
+
+bool VstEngineAudioProcessor::prepareGeneratedPattern(
+    std::size_t index, std::string_view profileId,
+    const VoxPatternV1* input, float mutationAmount,
+    int selectedStart, int selectedEnd,
+    vstengine::sequence::Sequence& candidate,
+    std::vector<std::byte>& encoded, juce::String& diagnostic) const
+{
+    if (index >= vstengine::instrument::maxSlots || profileId.empty()) {
+        diagnostic = "No generator profile";
+        return false;
+    }
+    const auto& slot = rack.state()[index];
+    const auto resolution = instrumentRegistry.resolve(slot.instrumentId);
+    if (!resolution || resolution.provider == nullptr) {
+        diagnostic = resolution.diagnostic;
+        return false;
+    }
+    VoxGenerationContextV1 context {};
+    context.structSize = sizeof(context);
+    context.globalSeed = static_cast<std::uint32_t>(
+        apvts.getRawParameterValue("rngSeed")->load());
+    if (input != nullptr)
+        context.globalSeed ^= vstengine::sequence::patternFingerprint(*input)
+            ^ 0x9e3779b9u;
+    context.slotId = slot.slotId;
+    std::snprintf(context.instrumentId.bytes, sizeof(context.instrumentId.bytes),
+                  "%s", slot.instrumentId.c_str());
+    std::snprintf(context.styleId.bytes, sizeof(context.styleId.bytes), "%.*s",
+                  static_cast<int>(profileId.size()), profileId.data());
+    context.rootNote = static_cast<std::int32_t>(
+        apvts.getRawParameterValue("rootNote")->load());
+    context.bpm = latestHostBpm.load(std::memory_order_relaxed);
+    context.mutation = mutationAmount;
+    VoxPatternV1 pattern { sizeof(VoxPatternV1) };
+    const auto status = resolution.provider->generatePattern(
+        slot.instrumentId, profileId, context, input, pattern);
+    if (status != vstengine::instrument::ContentStatus::ok
+        || (input != nullptr
+            && !vstengine::sequence::mergePatternMutation(
+                *input, pattern, mutationAmount, selectedStart, selectedEnd,
+                pattern))
+        || !vstengine::sequence::fromPattern(pattern, candidate)
+        || !vstengine::sequence::encodePattern(pattern, encoded)) {
+        diagnostic = "pattern generation failed";
+        return false;
+    }
+    diagnostic.clear();
+    return true;
+}
+
+bool VstEngineAudioProcessor::mutateSelectedPattern(
+    bool selectedStepsOnly, juce::String& diagnostic)
+{
+    const auto index = selectedSlotIndex();
+    if (rackParameterRefs[index].locked->load() >= 0.5f) {
+        diagnostic = "Slot locked";
+        return false;
+    }
+    const auto profile = generatorProfileForSlot(index);
+    const auto input = vstengine::sequence::toPattern(
+        patternRuntime->slotSequences[index]);
+    const auto& current = patternRuntime->slotSequences[index];
+    const int start = selectedStepsOnly && current.hasSelection()
+        ? current.getSelectedStart() : -1;
+    const int end = selectedStepsOnly && current.hasSelection()
+        ? current.getSelectedEnd() : -1;
+    vstengine::sequence::Sequence candidate;
+    std::vector<std::byte> encoded;
+    if (!prepareGeneratedPattern(index, profile, &input, 0.35f, start, end,
+                                 candidate, encoded, diagnostic))
+        return false;
+    if (start >= 0) candidate.setSelectedRange(start, end);
+    suspendProcessing(true);
+    const auto committed = rack.updatePatternState(index, profile,
+        VOX_PATTERN_SCHEMA_V1, std::move(encoded));
+    if (committed) {
+        patternRuntime->slotSequences[index] = std::move(candidate);
+        publishPartSequenceForAudio(static_cast<int>(index));
+        patternRuntime->schedulers[index].reset(currentSampleRate);
+    }
+    suspendProcessing(false);
+    diagnostic = committed ? juce::String {} : "pattern state commit failed";
+    return committed;
+}
+
+bool VstEngineAudioProcessor::runGlobalPatternOperation(
+    bool mutate, juce::String& diagnostic)
+{
+    std::array<vstengine::sequence::Sequence,
+               vstengine::instrument::maxSlots> candidates;
+    std::array<std::vector<std::byte>,
+               vstengine::instrument::maxSlots> encoded;
+    std::array<std::string, vstengine::instrument::maxSlots> profiles;
+    std::array<bool, vstengine::instrument::maxSlots> changed {};
+    std::size_t changedCount {};
+    for (std::size_t index = 0; index < changed.size(); ++index) {
+        if (rackParameterRefs[index].locked->load() >= 0.5f) continue;
+        const auto* descriptor = rack.descriptor(index);
+        if (descriptor == nullptr
+            || (descriptor->capabilities
+                & vstengine::instrument::Capability::patternGenerator) == 0)
+            continue;
+        profiles[index] = generatorProfileForSlot(index);
+        const auto input = vstengine::sequence::toPattern(
+            patternRuntime->slotSequences[index]);
+        if (!prepareGeneratedPattern(index, profiles[index],
+                mutate ? &input : nullptr, mutate ? 0.35f : 0.0f, -1, -1,
+                candidates[index], encoded[index], diagnostic))
+            return false;
+        changed[index] = true;
+        ++changedCount;
+    }
+    if (changedCount == 0) {
+        diagnostic = "No unlocked generator slots";
+        return false;
+    }
+    suspendProcessing(true);
+    for (std::size_t index = 0; index < changed.size(); ++index) {
+        if (!changed[index]) continue;
+        if (!rack.updatePatternState(index, profiles[index],
+                VOX_PATTERN_SCHEMA_V1, std::move(encoded[index]))) {
+            suspendProcessing(false);
+            diagnostic = "global pattern commit failed";
+            return false;
+        }
+        patternRuntime->slotSequences[index] = std::move(candidates[index]);
+        publishPartSequenceForAudio(static_cast<int>(index));
+        patternRuntime->schedulers[index].reset(currentSampleRate);
+    }
+    suspendProcessing(false);
+    diagnostic = juce::String(static_cast<int>(changedCount))
+        + (mutate ? " slots mutated" : " slots generated");
+    return true;
+}
+
+bool VstEngineAudioProcessor::generateAllPatterns(juce::String& diagnostic)
+{
+    return runGlobalPatternOperation(false, diagnostic);
+}
+
+bool VstEngineAudioProcessor::mutateAllPatterns(juce::String& diagnostic)
+{
+    return runGlobalPatternOperation(true, diagnostic);
 }
 
 int VstEngineAudioProcessor::nextFreeChannel() const noexcept
