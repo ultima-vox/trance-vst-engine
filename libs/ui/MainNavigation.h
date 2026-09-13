@@ -6,7 +6,13 @@ namespace vstengine::ui {
 
 class MainNavigation final : public juce::Component {
 public:
-    enum class Page { rack, sequence, presets, settings, count };
+    enum class Page {
+        sound = 0, rack = sound, presets = sound,
+        pattern = 1, sequence = pattern,
+        routing = 2, zones = 3, macros = 4,
+        advanced = 5, settings = advanced,
+        count = 6
+    };
     MainNavigation();
     void resized() override;
     void setCurrentPage (Page);

@@ -207,6 +207,14 @@ bool VstEngineAudioProcessor::prepareEffectsState(
 void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midi)
 {
+    const auto processStart = juce::Time::getHighResolutionTicks();
+    if (!midi.isEmpty()) {
+        midiActivity.store(12u, std::memory_order_relaxed);
+    } else {
+        const auto remaining = midiActivity.load(std::memory_order_relaxed);
+        if (remaining != 0u)
+            midiActivity.store(remaining - 1u, std::memory_order_relaxed);
+    }
 #if 0 // Fixed-Part implementation retained in history; generic Rack path below.
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
@@ -464,6 +472,15 @@ void VstEngineAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         { auditionEvents.data(), auditionCount }, rackControls[selected].slotId,
         rackControls, generatedStreams);
     effectsChain.process({ outputs.data(), channels }, blockSamples);
+    const auto elapsed = juce::Time::highResolutionTicksToSeconds(
+        juce::Time::getHighResolutionTicks() - processStart);
+    const auto budget = currentSampleRate > 0.0
+        ? static_cast<double>(blockSamples) / currentSampleRate : 0.0;
+    const auto measured = static_cast<float>(juce::jlimit(0.0, 4.0,
+        budget > 0.0 ? elapsed / budget : 0.0));
+    const auto previous = cpuLoad.load(std::memory_order_relaxed);
+    cpuLoad.store(previous * 0.85f + measured * 0.15f,
+                  std::memory_order_relaxed);
 #endif
 }
 

@@ -1,10 +1,11 @@
 #pragma once
+
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "ui/GlobalHeader.h"
 #include "ui/MainNavigation.h"
-#include "ui/PresetBrowser.h"
 #include "ui/StepSequencer.h"
+#include "ui/ZoneRangeEditor.h"
 
 class VstEngineAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                              private juce::Timer {
@@ -14,47 +15,14 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void showPageForTesting(vstengine::ui::MainNavigation::Page);
-    [[nodiscard]] vstengine::ui::MainNavigation::Page
-        currentPageForTesting() const noexcept;
-    [[nodiscard]] float keyboardKeyWidthForTesting(
-        vstengine::ui::MainNavigation::Page) const noexcept;
-    [[nodiscard]] int keyboardComponentWidthForTesting(
-        vstengine::ui::MainNavigation::Page) const noexcept;
+    [[nodiscard]] vstengine::ui::MainNavigation::Page currentPageForTesting() const noexcept;
+    [[nodiscard]] float keyboardKeyWidthForTesting(vstengine::ui::MainNavigation::Page) const noexcept;
+    [[nodiscard]] int keyboardComponentWidthForTesting(vstengine::ui::MainNavigation::Page) const noexcept;
+    [[nodiscard]] juce::Rectangle<int> rackBoundsForTesting() const noexcept;
+    [[nodiscard]] juce::Rectangle<int> workspaceBoundsForTesting() const noexcept;
+    [[nodiscard]] juce::Rectangle<int> keyboardBoundsForTesting() const noexcept;
 
 private:
-    class RackPage final : public juce::Component {
-    public:
-        explicit RackPage(VstEngineAudioProcessor&);
-        void paint(juce::Graphics&) override;
-        void resized() override;
-        void refresh();
-        float keyboardKeyWidth() const noexcept { return keyboard.getKeyWidth(); }
-        int keyboardWidth() const noexcept { return keyboard.getWidth(); }
-    private:
-        void select(std::size_t);
-        void bindSelectedSlot();
-        void applyChannel(VstEngineAudioProcessor::ChannelConflictAction);
-        VstEngineAudioProcessor& processor;
-        std::array<juce::TextButton, vstengine::instrument::maxSlots> slots;
-        juce::ComboBox instrument, midiIn, soundPreset, patternProfile;
-        juce::TextButton swap { "SWAP" }, move { "MOVE" }, layerAction { "LAYER" };
-        juce::ToggleButton layer { "Layer" }, enabled { "Enabled" },
-            mute { "Mute" }, solo { "Solo" }, locked { "Lock" };
-        juce::Slider keyLow, keyHigh, velocityLow, velocityHigh, transpose,
-            level, pan;
-        std::array<juce::Slider, vstengine::instrument::macrosPerSlot> macros;
-        std::array<juce::Label, vstengine::instrument::macrosPerSlot> macroLabels;
-        juce::Label title, routingTitle, macroTitle, status;
-        juce::MidiKeyboardComponent keyboard;
-        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>
-            sliderAttachments;
-        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
-            buttonAttachments;
-        std::vector<std::string> soundPresetIds, patternProfileIds;
-        std::size_t selected {};
-        int pendingChannel {};
-    };
-
     struct SequenceCallbacks final : vstengine::ui::StepSequencer::Callbacks {
         explicit SequenceCallbacks(VstEngineAudioProcessor& p) : processor(p) {}
         void onCopy() override; void onPaste() override;
@@ -69,45 +37,124 @@ private:
         bool copied {};
     };
 
-    class SequencePage final : public juce::Component {
+    class RackRail final : public juce::Component {
     public:
-        explicit SequencePage(VstEngineAudioProcessor&);
-        void paint(juce::Graphics&) override;
-        void resized() override;
-        void refresh();
-        void setPlayHead(int);
+        explicit RackRail(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override; void refresh();
+        std::function<void(std::size_t)> onSelected;
+    private:
+        VstEngineAudioProcessor& processor;
+        juce::Label title;
+        std::array<juce::TextButton, vstengine::instrument::maxSlots> slots;
+    };
+
+    class InstrumentHeader final : public juce::Component {
+    public:
+        explicit InstrumentHeader(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override;
+        void bind(std::size_t); void refresh();
+        std::function<void()> onModelChanged;
+    private:
+        VstEngineAudioProcessor& processor;
+        juce::Label title, subtitle;
+        juce::ComboBox instrument, preset, midiIn;
+        juce::TextButton presetPrevious { "<" }, presetNext { ">" };
+        std::vector<std::string> presetIds;
+        std::size_t selected {};
+    };
+
+    class MacroPage final : public juce::Component {
+    public:
+        MacroPage(VstEngineAudioProcessor&, juce::String title, std::size_t visibleCount);
+        void paint(juce::Graphics&) override; void resized() override; void bind(std::size_t);
+    private:
+        VstEngineAudioProcessor& processor;
+        juce::Label title, description;
+        std::array<juce::Slider, vstengine::instrument::macrosPerSlot> knobs;
+        std::array<juce::Label, vstengine::instrument::macrosPerSlot> labels;
+        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
+        std::size_t count;
+    };
+
+    class PatternPage final : public juce::Component {
+    public:
+        explicit PatternPage(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override;
+        void bind(std::size_t); void refresh(); void setPlayHead(int);
     private:
         VstEngineAudioProcessor& processor;
         SequenceCallbacks callbacks;
         vstengine::ui::StepSequencer sequencer;
+        juce::ComboBox profile;
+        juce::TextButton generate { "Generate" }, mutate { "Mutate Selected" };
         juce::Label status;
+        std::vector<std::string> profileIds;
     };
 
-    class SettingsPage final : public juce::Component {
+    class RoutingPage final : public juce::Component {
     public:
-        explicit SettingsPage(VstEngineAudioProcessor&);
-        void paint(juce::Graphics&) override;
-        void resized() override;
+        explicit RoutingPage(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override; void bind(std::size_t);
     private:
-        juce::Label title, description, generationStatus;
-        juce::ComboBox midiMode;
+        void assign(VstEngineAudioProcessor::ChannelConflictAction);
+        VstEngineAudioProcessor& processor;
+        juce::Label title, status;
+        juce::ComboBox midiIn;
+        juce::ToggleButton layer { "Layer" }, enabled { "Enabled" }, mute { "Mute" }, solo { "Solo" }, locked { "Lock" };
+        juce::Slider level, pan;
+        juce::TextButton swap { "SWAP" }, move { "MOVE" }, layerAction { "LAYER" };
+        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> sliderAttachments;
+        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
+        std::size_t selected {};
+        int pendingChannel {};
+    };
+
+    class ZonesPage final : public juce::Component {
+    public:
+        explicit ZonesPage(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override; void bind(std::size_t);
+    private:
+        VstEngineAudioProcessor& processor;
+        juce::Label title, transposeLabel;
+        vstengine::ui::ZoneRangeEditor ranges;
+        juce::Slider transpose;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+    };
+
+    class AdvancedPage final : public juce::Component {
+    public:
+        explicit AdvancedPage(VstEngineAudioProcessor&);
+        void paint(juce::Graphics&) override; void resized() override; void bind(std::size_t);
+    private:
+        VstEngineAudioProcessor& processor;
+        juce::Label title, description, status;
+        juce::ComboBox midiMode, effectsPreset;
         juce::Slider seed;
-        juce::TextButton panic { "GLOBAL PANIC" };
-        juce::TextButton generateAll { "Generate All" };
-        juce::TextButton mutateAll { "Mutate All" };
+        juce::TextButton generateAll { "Generate All" }, mutateAll { "Mutate All" };
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> seedAttachment;
     };
 
     void timerCallback() override;
+    void bindSelection(std::size_t);
     void showPage(vstengine::ui::MainNavigation::Page);
+    void cycleGlobalPreset(int delta);
+    void loadGlobalPreset(int index);
+    void saveGlobalPreset();
+    void refreshGlobalPresets();
     VstEngineAudioProcessor& processor;
+    vstengine::ui::VoxLookAndFeel lookAndFeel;
     vstengine::ui::GlobalHeader header;
+    RackRail rackRail;
+    InstrumentHeader instrumentHeader;
     vstengine::ui::MainNavigation navigation;
-    RackPage rackPage;
-    SequencePage sequencePage;
-    vstengine::ui::PresetBrowser presets;
-    SettingsPage settings;
-    std::array<juce::Component*, 4> pages;
+    MacroPage soundPage;
+    PatternPage patternPage;
+    RoutingPage routingPage;
+    ZonesPage zonesPage;
+    MacroPage macrosPage;
+    AdvancedPage advancedPage;
+    std::array<juce::Component*, 6> pages;
+    juce::MidiKeyboardComponent keyboard;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VstEngineAudioProcessorEditor)
 };

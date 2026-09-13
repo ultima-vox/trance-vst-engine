@@ -5,7 +5,9 @@ namespace vstengine::ui {
 
 MainNavigation::MainNavigation()
 {
-    static constexpr const char* names[] { "RACK", "SEQ", "PRESETS", "SETTINGS" };
+    static constexpr const char* names[] {
+        "SOUND", "PATTERN", "ROUTING", "ZONES", "MACROS", "ADVANCED"
+    };
     for (size_t i = 0; i < buttons.size(); ++i) {
         auto& button = buttons[i];
         button.setButtonText (names[i]);
@@ -14,12 +16,12 @@ MainNavigation::MainNavigation()
         styleButton (button);
         addAndMakeVisible (button);
     }
-    setCurrentPage (Page::rack);
+    setCurrentPage (Page::sound);
 }
 
 void MainNavigation::setCurrentPage (Page page)
 {
-    if (page < Page::rack || page >= Page::count)
+    if (page < Page::sound || page >= Page::count)
         return;
     currentPage = page;
     for (size_t i = 0; i < buttons.size(); ++i)
