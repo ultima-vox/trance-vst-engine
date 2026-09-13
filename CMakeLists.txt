@@ -348,6 +348,16 @@ target_include_directories(part_audio_isolation_tests PRIVATE
 target_link_libraries(part_audio_isolation_tests PRIVATE VstEngine)
 add_test(NAME part_audio_isolation_tests COMMAND part_audio_isolation_tests)
 
+add_executable(performance_stress_tests
+  tests/performance/PerformanceStressTests.cpp)
+target_include_directories(performance_stress_tests PRIVATE
+  apps/vst3
+  ${VST_LIBS_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}/VstEngine_artefacts/JuceLibraryCode
+  ${juce_SOURCE_DIR}/modules)
+target_link_libraries(performance_stress_tests PRIVATE VstEngine)
+add_test(NAME performance_stress_tests COMMAND performance_stress_tests)
+
 # 7C installable product. Keep VST3 bundle name stable for upgrades; CPack
 # provides NSIS install/uninstall and ZIP artifact for CI/review environments.
 install(DIRECTORY
