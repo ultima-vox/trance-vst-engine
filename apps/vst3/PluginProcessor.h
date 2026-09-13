@@ -74,6 +74,14 @@ public:
         return patternRuntime->schedulers[selectedSlotIndex()].playHeadStep();
     }
     void requestPanic() noexcept { panicRequested.store(true); }
+    [[nodiscard]] float currentCpuLoad() const noexcept
+    {
+        return cpuLoad.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool hasRecentMidiActivity() const noexcept
+    {
+        return midiActivity.load(std::memory_order_relaxed) != 0;
+    }
     void publishPartSequenceForAudio(int partIndex) noexcept;
     void publishSequenceForAudio() noexcept
     {
@@ -211,6 +219,8 @@ private:
     bool wasTransportPlaying { false };
     std::atomic<bool> panicRequested { false };
     std::atomic<double> latestHostBpm { 145.0 };
+    std::atomic<float> cpuLoad { 0.0f };
+    std::atomic<std::uint32_t> midiActivity { 0 };
 
     // Preallocated scratch buffer for keyboard MIDI. processBlock() reuses it
     // every block (clear, processNextMidiBuffer, merge) so the realtime
