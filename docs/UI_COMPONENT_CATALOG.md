@@ -1,70 +1,103 @@
-# VOX UI — Component Catalog v1.0
+# VOX UI — Component Catalog v1.1
 
 **Status:** CANON candidate  
 **Scope:** conceptual UI elements for the Ultima Vox audio-plugin family  
 **Applies to:** Vox Electronic/Trance Engine, Vox Drums Engine, Mastering Engine, future VOX audio products
 
-This catalog defines **types of UI elements**, not every repeated instance of a control.  
-For example, `VoxKnob` is specified once; Cutoff, Resonance, Drive and Output are usages of that component.
+This catalog defines **types of UI elements**, not every repeated instance of a control.
 
-The visual rules, colors, spacing, typography and interaction conventions are defined in `UI_DESIGN_SYSTEM.md`.
+The visual rules, colours, spacing, typography and interaction conventions are defined in `UI_DESIGN_SYSTEM.md`.
 
 ---
 
-## 1. Component levels
+# 1. Ownership model
 
-Every UI element belongs to one of four levels.
+The VOX family shares UI primitives but keeps product workflows separate.
 
-### Level A — primitives
+```text
+VOX UI CORE
+├── shared controls
+├── shared graph language
+├── shared meters
+├── shared layout/state grammar
+└── shared interaction rules
+
+VOX ELECTRONIC ENGINE
+├── synth Parts
+├── per-synth Pattern/Arp workflows
+├── FX workflows
+├── modulation/routing/zones
+└── keyboard/performance
+
+VOX DRUMS ENGINE
+├── kits / pads
+├── sample editing
+├── drum sequencing
+└── drum routing/mixer
+
+VOX MASTERING ENGINE
+├── mastering module chain
+├── analysis
+├── loudness / true peak / GR
+└── A/B reference workflows
+```
+
+**Important:** a shared component does not imply shared product ownership.
+
+---
+
+# 2. Component levels
+
+## Level A — primitives
 
 Reusable family-wide controls:
 
-- knob;
-- linear slider;
-- fader;
-- button;
-- icon button;
-- toggle;
-- switch;
-- segmented control;
-- combo box;
-- text input;
-- numeric/value field;
-- label;
-- section header;
-- tab;
-- badge/status indicator;
-- tooltip;
-- scrollbar;
-- context menu;
-- divider;
-- panel/container.
+- `VoxKnob`;
+- `VoxLinearSlider`;
+- `VoxFader`;
+- `VoxButton`;
+- `VoxIconButton`;
+- `VoxToggle`;
+- `VoxSwitch`;
+- `VoxSegmentedControl`;
+- `VoxComboBox`;
+- `VoxTextInput`;
+- `VoxValueField`;
+- `VoxLabel`;
+- `VoxSectionHeader`;
+- `VoxTabBar`;
+- `VoxStatusIndicator`;
+- `VoxTooltip`;
+- `VoxScrollBar`;
+- `VoxContextMenu`;
+- `VoxDivider`;
+- `VoxPanel`.
 
-These are implemented in shared `vox-ui`.
+These belong in shared `vox-ui`.
 
-### Level B — audio primitives
+## Level B — audio primitives
 
-Reusable audio-oriented visualization/control components:
+Reusable audio-oriented controls/visualizations:
 
-- waveform;
-- spectrum;
-- meter;
-- envelope;
-- filter response;
-- XY pad;
-- modulation curve;
-- piano keyboard;
-- macro control;
-- parameter modulation ring;
-- stereo/correlation display;
-- vectorscope/goniometer;
-- transfer curve.
+- `VoxWaveform`;
+- `VoxSpectrumAnalyzer` base;
+- `VoxMeter` / `VoxLevelMeter`;
+- `VoxEnvelopeEditor`;
+- `VoxFilterResponse`;
+- `VoxXYPad`;
+- `VoxModulationGraph`;
+- `VoxKeyboard`;
+- `VoxMacroControl`;
+- `VoxModulationRing`;
+- `VoxStereoScope`;
+- `VoxCorrelationMeter`;
+- `VoxTransferCurve`.
 
-These are family-wide when their semantics are generic.
+These are shared when the semantics are generic.
 
-### Level C — workflow widgets
+## Level C — workflow widgets
 
-Complex controls composed from primitives:
+Complex components composed from primitives:
 
 - preset browser;
 - instrument rack;
@@ -72,20 +105,21 @@ Complex controls composed from primitives:
 - piano roll;
 - step sequencer;
 - arpeggiator;
+- Pattern editor;
 - modulation matrix;
 - effect chain;
 - routing matrix;
 - zone editor;
 - sample editor;
 - drum pad;
-- module chain;
+- mastering module chain;
 - analyzer workspace.
 
-They may be shared when generic, or live in a product-specific layer.
+Ownership is product-specific even when implementation primitives are shared.
 
-### Level D — pages/workspaces
+## Level D — pages/workspaces
 
-Complete product workflows:
+Examples:
 
 - Sound;
 - Pattern;
@@ -93,118 +127,58 @@ Complete product workflows:
 - Zones;
 - Macros;
 - Advanced;
-- Mixer;
 - FX;
-- Mastering chain;
+- Mixer;
+- Mastering Chain;
 - Analyzer;
-- Drum kit;
-- Sample edit.
+- Drum Kit;
+- Sample Edit.
 
-Pages compose existing components and should not introduce private styling.
+Pages compose existing components and must not invent private visual styles.
 
 ---
 
-# 2. Global shell
+# 3. Shared shell components
 
-## 2.1 VoxGlobalHeader
+## 3.1 VoxGlobalHeader
 
 Purpose:
 
 - product branding;
-- current preset;
-- previous/next preset;
+- preset/project selector;
+- previous/next;
 - save;
 - global output;
 - MIDI activity;
 - CPU/load status;
-- panic;
-- settings;
-- optional random/seed control.
+- Panic;
+- Settings;
+- optional seed/random control.
 
-Must remain visually consistent across VOX products.
+## 3.2 VoxMainNavigation
 
-## 2.2 VoxMainNavigation
+Family navigation container. Labels are product-specific, geometry and interaction grammar are shared.
 
-Family navigation container.
-
-Electronic Engine canonical sections:
-
-- Sound
-- Pattern
-- Routing
-- Zones
-- Macros
-- Advanced
-
-Mastering and Drums may use different page names, but the navigation grammar remains the same.
-
-## 2.3 VoxStatusIndicator
-
-For:
-
-- MIDI input;
-- transport;
-- clipping;
-- bypass;
-- sync;
-- module missing;
-- error/warning;
-- CPU status.
-
-Critical states must not rely only on colour.
-
----
-
-# 3. Presets and content
-
-## 3.1 VoxPresetSelector
-
-Compact current-preset selector for headers.
+## 3.3 VoxPresetSelector / VoxPresetBrowser
 
 Supports:
 
-- current name;
-- previous;
-- next;
-- dropdown;
-- dirty/modified state.
-
-## 3.2 VoxPresetBrowser
-
-Full browser:
-
 - Factory/User source;
 - search;
-- category;
-- engine/instrument filter;
-- preset list;
-- sound/full preset type;
-- load;
-- save;
-- save full;
-- rename;
-- delete;
-- refresh;
+- category/filter;
+- load/save;
+- rename/delete where allowed;
+- dirty state;
 - read-only state;
-- status/error message.
-
-## 3.3 VoxContentBrowser
-
-Generic browser foundation for future:
-
-- samples;
-- wavetables;
-- impulse responses;
-- modules;
-- generator profiles.
+- full/sound preset distinction where supported.
 
 ---
 
-# 4. Instrument and Part system
+# 4. Electronic Engine — Instrument / Part system
 
 ## 4.1 VoxInstrumentRack
 
-Container for instrument slots / Parts.
+Container for Electronic Engine Parts.
 
 Responsibilities:
 
@@ -215,40 +189,33 @@ Responsibilities:
 - solo;
 - lock;
 - MIDI channel;
+- level/pan;
 - output destination;
-- activity;
-- missing/incompatible module state.
+- module resolution/error state.
 
 ## 4.2 VoxInstrumentSlot
 
-One rack row/card.
-
 Displays:
 
-- slot/part number;
+- slot number;
 - instrument identity;
-- channel;
-- activity;
-- enable;
-- mute/solo;
-- level/pan where appropriate;
-- lock;
-- selected state.
+- name;
+- subtitle/preset;
+- MIDI channel;
+- power/activity;
+- selected/muted/solo states.
 
 ## 4.3 VoxPartHeader
 
-Header of the currently selected Part:
+Header of selected Part:
 
 - instrument name;
 - preset;
 - MIDI channel;
-- mute;
-- solo;
-- enabled;
-- lock;
-- level;
-- pan;
-- output.
+- enable/mute/solo/lock;
+- level/pan/output where applicable.
+
+**Arpeggiator and sequence editors are never represented by `VoxInstrumentSlot` on their own.**
 
 ---
 
@@ -258,9 +225,9 @@ Header of the currently selected Part:
 
 Variants:
 
-- Small
-- Normal
-- Large
+- Small;
+- Normal;
+- Large.
 
 Capabilities:
 
@@ -273,41 +240,24 @@ Capabilities:
 - fine adjustment;
 - tooltip.
 
-## 5.2 VoxLinearSlider
+## 5.2 VoxLinearSlider / VoxFader
 
-For parameters where position is easier to read linearly.
-
-Orientation:
-
-- horizontal;
-- vertical.
-
-## 5.3 VoxFader
-
-Dedicated mixer-level control.
-
-Must support:
+`VoxFader` adds:
 
 - dB scale;
 - unity marker;
-- current value;
 - optional integrated meter.
 
-## 5.4 VoxValueField
+## 5.3 VoxChoiceControl
 
-Text/numeric representation of a parameter.
-
-Must allow direct entry where safe.
-
-## 5.5 VoxChoiceControl
-
-Choice values such as:
+Used for:
 
 - waveform;
 - filter type;
 - sync division;
 - routing destination;
-- MIDI mode.
+- MIDI mode;
+- modulation source/destination.
 
 Visual forms:
 
@@ -317,22 +267,17 @@ Visual forms:
 
 ---
 
-# 6. Synthesizer elements
+# 6. Shared synthesizer components
 
-These components are used by Bass, Lead, Acid, Atmos and future synth engines.
+Used by Psy Bass, Lead, Acid, Atmos and future synth Parts.
 
 ## 6.1 VoxOscillatorPanel
-
-Contains oscillator-related controls.
 
 Possible controls:
 
 - waveform;
 - morph;
-- tune;
-- octave;
-- semitone;
-- fine tune;
+- tune/octave/semitone/fine;
 - phase;
 - sync;
 - FM;
@@ -341,41 +286,24 @@ Possible controls:
 - unison;
 - voices;
 - detune;
-- stereo spread;
+- spread;
 - oscillator mix.
 
-Only parameters supported by the engine are shown.
+Only controls supported by the current engine are shown.
 
-## 6.2 VoxWaveformDisplay
+## 6.2 VoxWaveformDisplay / VoxWaveformSelector
 
-A generic oscillator waveform visualization.
+Modes may include:
 
-Modes:
-
-- generated waveform preview;
-- wavetable position preview;
+- generated oscillator waveform;
+- wavetable position;
 - sample waveform where appropriate.
 
-Must not display fake realtime behaviour.
+No fake realtime animation.
 
-## 6.3 VoxWaveformSelector
+## 6.3 VoxFilterPanel / VoxFilterResponse
 
-Selection of waveform type.
-
-Common values may include:
-
-- sine;
-- triangle;
-- saw;
-- square/pulse;
-- noise;
-- engine-specific forms.
-
-It is a semantic selector, not a row of unrelated buttons.
-
-## 6.4 VoxFilterPanel
-
-Contains:
+Contains/supports:
 
 - filter type;
 - cutoff;
@@ -383,84 +311,76 @@ Contains:
 - drive;
 - key tracking;
 - envelope amount;
-- slope when available.
+- slope.
 
-## 6.5 VoxFilterResponse
+Response graph follows actual state.
 
-Graphical frequency-response representation.
+## 6.4 VoxEnvelopeEditor
 
-Requirements:
-
-- current cutoff;
-- resonance;
-- filter type;
-- slope;
-- updates from actual parameter state.
-
-## 6.6 VoxEnvelopeEditor
-
-Generic envelope editor.
-
-Minimum ADSR:
-
-- attack;
-- decay;
-- sustain;
-- release.
-
-Extended forms may add:
-
-- hold;
-- delay;
-- curve;
-- loop;
-- velocity amount.
-
-Used for:
+Generic envelope for:
 
 - amplitude;
 - filter;
 - pitch;
-- modulation envelopes.
+- modulation.
 
-## 6.7 VoxPitchEnvelope
+Minimum ADSR, optionally delay/hold/curve/loop if implemented.
 
-Specialised compact envelope for transient pitch movement.
+## 6.5 VoxPitchEnvelope
 
-Useful for:
+Compact pitch/transient envelope for bass, kick/percussive synths and FX.
 
-- psy bass;
-- kick;
-- percussion;
-- FX.
-
-## 6.8 VoxUnisonPanel
-
-Contains:
+## 6.6 VoxUnisonPanel
 
 - voices;
 - detune;
 - spread;
 - phase/randomisation.
 
-## 6.9 VoxDrivePanel
+## 6.7 VoxDrivePanel
 
-Generic non-linear stage:
-
-- amount/drive;
+- drive/amount;
 - character/type;
 - mix;
-- output compensation where applicable.
+- optional output compensation.
 
 ---
 
-# 7. Acid / 303 workflow
+# 7. Electronic Engine synth workflows
 
-## 7.1 VoxAcidPanel
+## 7.1 VoxBassPanel
 
-Engine-specific composition of generic components.
+Composition may include:
 
-Must expose supported Acid controls:
+- oscillator;
+- amp envelope;
+- pitch envelope;
+- filter;
+- drive;
+- accent;
+- glide/performance;
+- output;
+- modulation.
+
+## 7.2 VoxLeadPanel
+
+Composition may include:
+
+- oscillator/morph;
+- sync/FM/ring/noise;
+- unison;
+- filter;
+- amp envelope;
+- modulation envelope;
+- glide;
+- macros;
+- embedded Arpeggiator/Phrase panel;
+- performance;
+- modulation matrix.
+
+## 7.3 VoxAcidPanel
+
+Must expose supported Acid semantics:
 
 - waveform;
 - cutoff;
@@ -470,99 +390,29 @@ Must expose supported Acid controls:
 - accent;
 - slide;
 - drive;
-- output.
-
-## 7.2 VoxAccentControl
-
-Semantic accent control used by acid/sequencer/percussion workflows.
-
-## 7.3 VoxSlideControl
-
-Displays/enables glide/slide behaviour and slide time where the engine supports it.
-
----
-
-# 8. Bass workflow
-
-## 8.1 VoxBassPanel
-
-Composed from:
-
-- oscillator;
-- amp envelope;
-- pitch envelope;
-- filter;
-- drive;
 - output;
-- glide where supported.
+- integrated Acid sequence workflow.
 
-The UI must represent the actual Psy Bass engine parameters rather than a generic synth mock-up.
+## 7.4 VoxAtmosPanel
 
----
+Possible semantic controls:
 
-# 9. Lead synthesizer workflow
-
-## 9.1 VoxLeadPanel
-
-Composed from:
-
-- oscillator/morph;
-- sync;
-- FM;
-- ring modulation;
-- noise;
-- unison;
-- detune;
-- filter;
-- filter envelope;
-- ADSR;
-- drive;
-- output.
-
-## 9.2 VoxVoiceActivity
-
-Optional polyphony/voice-state visualisation.
-
-Must be low-cost and fed through a safe UI snapshot, never by directly reading mutable realtime voice objects.
-
----
-
-# 10. Atmos / texture workflow
-
-## 10.1 VoxAtmosPanel
-
-Semantic controls:
-
+- layer A/B;
+- sample/granular parameters;
+- texture;
 - blend;
 - brightness;
-- motion;
-- evolution;
-- attack;
-- decay;
-- sustain;
-- release;
-- space;
+- motion/evolution;
+- envelopes;
+- spectral cloud;
+- space/shimmer/reverb;
+- XY morph;
 - spread;
-- drift;
-- resonance;
-- texture;
-- density;
-- harmonics;
 - output.
 
-## 10.2 VoxTextureDisplay
+## 7.5 VoxSemanticFxPanel
 
-Slow-moving visual representation of evolving texture.
-
-It must communicate movement/evolution without becoming decorative noise.
-
----
-
-# 11. Semantic FX instruments
-
-## 11.1 VoxSemanticFxPanel
-
-Supports event families:
+Event families may include:
 
 - sweep;
 - laser;
@@ -575,7 +425,7 @@ Supports event families:
 - metallic;
 - alien.
 
-Controls:
+Controls may include:
 
 - family;
 - tone;
@@ -586,24 +436,58 @@ Controls:
 - drive;
 - output.
 
-## 11.2 VoxFxEventPreview
-
-Visual shape/time preview for one-shot FX.
-
-The horizontal axis represents event time.  
-The display may visualise amplitude/pitch/filter evolution if actual engine data is available.
-
 ---
 
-# 12. Sequencing and musical generation
+# 8. Synth sequencing and musical generation
 
-## 12.1 VoxStepSequencer
+This section is a **capability layer of a selected synth Part**, not a standalone Electronic Engine instrument.
 
-Canonical grid sequencer.
+## 8.1 Ownership rule
 
-Current model must support up to 64 steps.
+Every sequence, arp, phrase, piano-roll and generated pattern is owned by the selected Part/instrument.
 
-Lanes:
+Examples:
+
+```text
+Lead Part
+├── Sound
+│   └── compact Arpeggiator / Phrase panel
+└── Pattern
+    └── expanded VoxPatternEditor
+
+Acid Part
+├── Sound
+│   └── integrated Acid Step Sequencer
+└── Pattern
+    └── expanded Acid sequence editing
+```
+
+Forbidden:
+
+- `Arp / Sequence` as a standalone rack Part;
+- independent hero identity for Arp;
+- sequencing state detached from the selected synth;
+- one generic sequence silently controlling a different Part.
+
+## 8.2 VoxPatternEditor
+
+Expanded editor container for the currently selected synth.
+
+It composes:
+
+- `VoxStepSequencer` and/or `VoxPianoRoll`;
+- `VoxArpeggiator` controls when supported;
+- lane selector;
+- Pattern preset selector;
+- transport/playhead;
+- generator/mutate controls;
+- per-pattern routing/modulation where applicable.
+
+## 8.3 VoxStepSequencer
+
+Must support up to the engine's sequence limit.
+
+Possible lanes:
 
 - note;
 - gate;
@@ -612,42 +496,21 @@ Lanes:
 - probability;
 - ratchet;
 - slide;
-- gate width when exposed.
+- tie;
+- octave;
+- gate width;
+- modulation lanes.
 
-Controls:
+Only supported lanes are shown for a given instrument.
 
-- sequence length;
-- timing/division;
-- playhead;
-- selection.
-
-Editing operations:
-
-- copy;
-- paste;
-- rotate left/right;
-- reverse;
-- shift left/right;
-- transpose up/down;
-- octave up/down;
-- mutate;
-- clear.
-
-## 12.2 VoxPianoRoll
-
-Full note editor.
+## 8.4 VoxPianoRoll
 
 Must provide:
 
 - note blocks;
-- note start;
-- duration;
-- pitch;
+- start/duration/pitch;
 - velocity;
-- selection;
-- move;
-- resize;
-- delete;
+- selection/move/resize/delete;
 - grid snapping;
 - zoom/scroll;
 - playhead;
@@ -662,36 +525,34 @@ Optional lower lanes:
 - slide;
 - modulation.
 
-A Part/instrument must edit its own sequence; the piano roll cannot silently edit another Part.
+## 8.5 VoxArpeggiator
 
-## 12.3 VoxArpeggiator
+Embedded synth capability.
 
-Canonical arp editor, not a collection of random buttons.
-
-Sections:
+Sections may include:
 
 **Mode**
-- Up
-- Down
-- Up/Down
-- Down/Up
-- As Played
-- Random
-- Chord
+- Up;
+- Down;
+- Up/Down;
+- Down/Up;
+- As Played;
+- Random;
+- Chord.
 
 **Timing**
 - rate/division;
 - gate;
 - swing;
-- sync/free where supported.
+- sync/free.
 
 **Pitch**
 - octave range;
 - transpose;
-- optional scale/key constraint.
+- scale/key constraint.
 
 **Pattern**
-- pattern length;
+- length;
 - step enable;
 - octave offset;
 - velocity;
@@ -704,56 +565,44 @@ Sections:
 - retrigger;
 - restart behaviour.
 
-If the DSP engine does not yet support an arp parameter, the UI must not expose a fake control.
+No unsupported parameter may appear as a fake control.
 
-## 12.4 VoxPatternGenerator
-
-Generator UI:
+## 8.6 VoxPatternGenerator
 
 - style/profile;
 - seed;
 - generate/regenerate;
 - mutate selected;
 - clear selected;
-- target Part;
+- target = current Part by default;
 - deterministic status.
 
-Current Trance Engine styles include:
+## 8.7 VoxMidiSourceSelector
 
-- Dark Psy;
-- Psytrance;
-- Forest.
+Canonical modes:
 
-## 12.5 VoxMidiSourceSelector
+- AUTO;
+- PIANO ROLL;
+- GENERATOR;
+- BOTH.
 
-Must represent canonical source modes:
-
-- AUTO
-- PIANO ROLL
-- GENERATOR
-- BOTH
-
-The order must remain aligned with the engine/host parameter schema.
+Order must remain aligned with the engine/host parameter schema.
 
 ---
 
-# 13. Modulation
+# 9. Modulation
 
-## 13.1 VoxMacroPanel
+## 9.1 VoxMacroPanel
 
-Canonical bank of macro controls.
+Per Part:
 
-Per slot/Part:
-
-- 8 macros;
+- 8 macros where supported;
 - label;
 - value;
 - assignment;
-- modulation/automation state.
+- automation/modulation state.
 
-## 13.2 VoxLfoEditor
-
-Contains:
+## 9.2 VoxLfoEditor
 
 - waveform;
 - rate;
@@ -764,87 +613,52 @@ Contains:
 - amount;
 - optional shape/skew.
 
-Visual area displays the actual selected LFO shape.
-
-## 13.3 VoxStepModulator
-
-Step-based modulation source.
-
-Controls:
+## 9.3 VoxStepModulator
 
 - number of steps;
 - values;
 - rate;
 - smoothing;
 - bipolar/unipolar;
-- randomise;
-- rotate;
-- reset.
+- randomise/rotate/reset.
 
-## 13.4 VoxModulationMatrix
+## 9.4 VoxModulationMatrix
 
-Rows represent routes:
+Rows:
 
 - source;
-- transform/polarity;
+- optional transform/polarity;
 - destination;
 - depth;
 - enable/delete.
 
-Supported source families are derived from the engine contract and currently include:
-
-- macro;
-- LFO;
-- velocity;
-- mod wheel;
-- aftertouch;
-- envelope;
-- step modulation;
-- sample & hold;
-- random.
-
-The matrix must not invent destinations. Destination choices come from the instrument descriptor/registry.
-
-## 13.5 VoxModulationRing
-
-Optional overlay around knobs showing modulation range separately from the base parameter value.
+Destination choices come from the instrument contract/descriptor.
 
 ---
 
-# 14. Keyboard and performance
+# 10. Keyboard and performance
 
-## 14.1 VoxKeyboard
-
-Styled MIDI keyboard.
-
-Supports:
+## VoxKeyboard
 
 - mouse note input;
 - pressed-note state;
 - octave labels;
 - MIDI activity.
 
-## 14.2 VoxPitchBend
+Related controls:
 
-Pitch bend control.
-
-## 14.3 VoxModWheel
-
-Modulation wheel control.
-
-## 14.4 VoxXYPad
-
-Two-dimensional performance/modulation control.
-
-Must expose explicit X and Y destination labels.
+- `VoxPitchBend`;
+- `VoxModWheel`;
+- `VoxXYPad`;
+- Chords/Scale controls where supported.
 
 ---
 
-# 15. Routing and zones
+# 11. Routing and zones
 
-## 15.1 VoxRoutingPanel
+## VoxRoutingPanel
 
-Per Part/slot:
+Per Part:
 
 - route mode;
 - MIDI channel;
@@ -853,28 +667,21 @@ Per Part/slot:
 - transpose;
 - layer/channel routing.
 
-## 15.2 VoxZoneRangeEditor
-
-Graphical editor for:
+## VoxZoneRangeEditor
 
 - key low/high;
-- velocity low/high.
+- velocity low/high;
+- clear range handles and active range.
 
-Must show handles and active range clearly.
+## VoxRoutingMatrix
 
-## 15.3 VoxRoutingMatrix
-
-Used when routing grows beyond simple dropdowns.
-
-Rows/columns must have explicit source/destination identities.
+For more complex source/destination routing.
 
 ---
 
-# 16. Mixer
+# 12. Mixer and meters
 
-## 16.1 VoxMixerStrip
-
-Generic channel strip:
+## VoxMixerStrip
 
 - name;
 - activity;
@@ -885,35 +692,21 @@ Generic channel strip:
 - meter;
 - output destination.
 
-## 16.2 VoxLevelMeter
+## VoxLevelMeter
 
 Variants:
 
-- mono;
-- stereo;
+- mono/stereo;
 - peak;
 - RMS/average where relevant.
 
-Must distinguish:
-
-- normal;
-- warning;
-- clipping.
-
-## 16.3 VoxMasterStrip
-
-Global output strip:
-
-- gain;
-- output meter;
-- clip status;
-- optional limiter state depending on product.
+Clip/warning states must be explicit.
 
 ---
 
-# 17. Effects
+# 13. Effects
 
-The Trance Engine currently defines:
+Electronic Engine effect workflow may include:
 
 - distortion;
 - wavefolder;
@@ -924,190 +717,92 @@ The Trance Engine currently defines:
 - delay;
 - reverb.
 
-## 17.1 VoxEffectSlot
-
-One effect in a chain:
+## VoxEffectSlot
 
 - effect identity;
-- enabled/bypass;
+- enable/bypass;
 - mix;
-- amount;
-- rate;
-- character;
-- drag/reorder when supported.
+- selected state;
+- drag/reorder where supported.
 
-## 17.2 VoxEffectChain
+## VoxEffectChain
 
-Ordered effect modules.
+Shows signal order, bypass and serial/parallel structure where implemented.
 
-Must visually communicate:
+Specialized graph components may include:
 
-- signal order;
-- bypass state;
-- selected module;
-- drag/reorder state if ordering is editable.
-
-## 17.3 VoxDelayDisplay
-
-Optional time/feedback visualisation.
-
-## 17.4 VoxReverbDisplay
-
-Optional decay/space visualisation.
-
-No fake spectrum or waveform animation.
+- delay timing visualization;
+- reverb decay visualization;
+- distortion transfer curve.
 
 ---
 
-# 18. Waveform and sample editing
+# 14. Vox Drums Engine — separate product catalog
 
-Required primarily for Vox Drums Engine and sample-based future instruments.
+Drum-specific components belong to **Vox Drums Engine**, not Electronic Engine.
 
-## 18.1 VoxWaveform
+They remain valid VOX-family concepts and should use shared `vox-ui` primitives.
 
-Generic non-editing waveform display.
-
-Supports:
-
-- full waveform;
-- playhead;
-- selection;
-- markers.
-
-## 18.2 VoxSampleEditor
-
-Editable waveform workspace:
-
-- start;
-- end;
-- trim;
-- loop start/end;
-- fades;
-- zoom;
-- scroll;
-- transient markers;
-- playback cursor.
-
-## 18.3 VoxSliceEditor
-
-For slicing workflows:
-
-- slice markers;
-- add/remove;
-- selected slice;
-- optional MIDI mapping.
-
----
-
-# 19. Vox Drums Engine elements
-
-## 19.1 VoxDrumPad
+## 14.1 VoxDrumPad / VoxDrumGrid
 
 Displays:
 
 - pad identity;
-- instrument/sample name;
+- sample/instrument name;
 - activity/velocity;
-- mute;
-- solo;
-- selected state.
+- mute/solo;
+- selection.
 
-Optional interaction:
+## 14.2 VoxSampleEditor
 
-- trigger on click;
-- drag sample onto pad.
+Editable waveform workspace:
 
-## 19.2 VoxDrumGrid
+- start/end;
+- trim;
+- loop;
+- fades;
+- zoom/scroll;
+- transient markers;
+- playhead.
 
-Container of drum pads.
+## 14.3 VoxDrumVoiceEditor
 
-## 19.3 VoxDrumVoiceEditor
-
-Per-pad editing:
+Per pad:
 
 - sample;
 - pitch;
 - envelope;
 - filter;
-- drive;
+- transient;
 - pan;
 - level;
 - output;
 - choke group.
 
-## 19.4 VoxVelocityEditor
+## 14.4 VoxDrumSequencer
 
-Graphical velocity-lane editor.
+Rows correspond to drum voices/pads.
 
-## 19.5 VoxChokeGroupEditor
+May expose:
 
-Defines mutual-exclusion groups for percussion.
+- gate;
+- velocity;
+- probability;
+- mute/solo;
+- output;
+- fill/humanize.
 
-## 19.6 VoxDrumSequencer
-
-Multi-row sequencer where rows correspond to pads/instruments.
-
----
-
-# 20. Analysis and metering
-
-## 20.1 VoxSpectrumAnalyzer
-
-Frequency spectrum.
-
-Requirements:
-
-- frequency axis;
-- level axis;
-- readable grid;
-- current trace;
-- optional peak/average trace;
-- scalable refresh rate.
-
-## 20.2 VoxOscilloscope
-
-Time-domain waveform for diagnostics/synthesis when useful.
-
-## 20.3 VoxStereoScope
-
-Stereo imaging visualization.
-
-Possible forms:
-
-- vectorscope;
-- goniometer;
-- correlation meter.
-
-## 20.4 VoxTransferCurve
-
-Used for:
-
-- compressor;
-- limiter;
-- saturation;
-- waveshaper.
-
-Displays input/output relationship and current operating point when available.
+These components must not appear as an Electronic Engine rack instrument.
 
 ---
 
-# 21. Mastering Engine elements
+# 15. Mastering Engine — separate product catalog
 
-## 21.1 VoxModuleChain
+## VoxModuleChain
 
-Ordered mastering processors.
+Ordered mastering processors with selected/enabled/bypass/unavailable states.
 
-States:
-
-- selected;
-- enabled;
-- bypassed;
-- unavailable;
-- processing/activity.
-
-## 21.2 VoxSpectrumWorkspace
-
-Larger mastering-oriented spectrum/analyzer area.
+## VoxSpectrumWorkspace
 
 May contain:
 
@@ -1116,32 +811,28 @@ May contain:
 - reference trace;
 - EQ response overlay.
 
-## 21.3 VoxLoudnessMeter
+## VoxLoudnessMeter
 
-Must support only metrics actually implemented by the mastering engine.
-
-Potential visual groups:
+Only implemented metrics may be shown, such as:
 
 - Momentary;
 - Short-Term;
 - Integrated;
 - Loudness Range.
 
-## 21.4 VoxTruePeakMeter
+## VoxTruePeakMeter
 
-Dedicated true-peak visualization.
+Dedicated true-peak display.
 
-## 21.5 VoxGainReductionMeter
+## VoxGainReductionMeter
 
-For compressor/limiter/dynamics modules.
+For compressor/limiter/dynamics.
 
-## 21.6 VoxCorrelationMeter
+## VoxCorrelationMeter / VoxStereoScope
 
-Displays stereo phase correlation.
+Stereo phase/image visualization.
 
-## 21.7 VoxReferencePanel
-
-For A/B/reference workflow:
+## VoxReferencePanel / VoxBeforeAfterControl
 
 - A/B;
 - reference source;
@@ -1149,190 +840,9 @@ For A/B/reference workflow:
 - bypass;
 - compare state.
 
-## 21.8 VoxBeforeAfterControl
-
-Global before/after comparison.
-
 ---
 
-# 22. Graph language
-
-All graphs share:
-
-- `bg.graph`;
-- subtle grid;
-- family typography;
-- shared cursor/selection style;
-- consistent active cyan;
-- warning/danger only for semantic warnings;
-- no decorative animation unrelated to data.
-
-Generic graph base:
-
-`VoxGraph`
-
-Derived visual components:
-
-- `VoxWaveform`
-- `VoxFilterResponse`
-- `VoxEnvelopeEditor`
-- `VoxSpectrumAnalyzer`
-- `VoxTransferCurve`
-- `VoxLfoEditor`
-- `VoxStereoScope`
-
----
-
-# 23. Menus, dialogs and overlays
-
-## 23.1 VoxContextMenu
-
-Used for:
-
-- reset;
-- MIDI learn;
-- assign modulation;
-- copy/paste;
-- remove;
-- advanced parameter actions.
-
-## 23.2 VoxTooltip
-
-Must expose:
-
-- parameter name;
-- value/unit;
-- concise description where useful.
-
-## 23.3 VoxDialog
-
-For non-realtime actions:
-
-- save preset;
-- rename;
-- destructive confirmation;
-- missing module diagnostics;
-- settings.
-
-## 23.4 VoxToast / Notification
-
-Short non-blocking status:
-
-- preset saved;
-- copied;
-- module loaded;
-- error.
-
----
-
-# 24. Empty, loading and failure states
-
-Complex components must explicitly define:
-
-- empty;
-- loading where applicable;
-- missing resource;
-- missing module;
-- incompatible module/version;
-- disabled;
-- no selection;
-- no data.
-
-Do not render a broken normal-state widget when backing data is unavailable.
-
----
-
-# 25. Shared vs product-specific ownership
-
-## Shared `vox-ui`
-
-Should contain:
-
-- design tokens;
-- typography;
-- LookAndFeel;
-- panels;
-- buttons;
-- knobs;
-- sliders/faders;
-- toggles;
-- combo boxes;
-- tabs;
-- value fields;
-- labels;
-- meters base;
-- graph base;
-- waveform base;
-- envelope base;
-- filter-response base;
-- keyboard base;
-- generic mixer strip;
-- generic effect slot/chain visual primitives;
-- tooltip/menu/dialog visual grammar.
-
-## Trance/Electronic product layer
-
-- Instrument Rack;
-- Part Header;
-- Bass Panel;
-- Acid Panel;
-- Lead Panel;
-- Atmos Panel;
-- Semantic FX Panel;
-- Piano Roll;
-- Step Sequencer;
-- Arpeggiator;
-- Pattern Generator;
-- Modulation Matrix;
-- Zone editor composition;
-- Trance-specific Effect Chain composition.
-
-## Drums product layer
-
-- Drum Pad/Grid;
-- Drum Voice Editor;
-- Sample Editor composition;
-- Slice Editor;
-- Choke Group;
-- Drum Sequencer.
-
-## Mastering product layer
-
-- Module Chain;
-- Loudness workflow;
-- True Peak workflow;
-- reference/A-B workflow;
-- mastering analyzer workspace.
-
----
-
-# 26. Implementation rule
-
-A complex widget should be **composed**, not painted as one giant monolithic component.
-
-Example:
-
-```text
-VoxLeadPanel
-├── VoxOscillatorPanel
-│   ├── VoxWaveformSelector
-│   ├── VoxKnob: Morph
-│   ├── VoxToggle: Sync
-│   ├── VoxKnob: FM
-│   └── VoxUnisonPanel
-├── VoxFilterPanel
-│   ├── VoxFilterResponse
-│   ├── VoxKnob: Cutoff
-│   └── VoxKnob: Resonance
-├── VoxEnvelopeEditor
-└── VoxDrivePanel
-```
-
-This rule applies to every product.
-
----
-
-# 27. Data truth rule
+# 16. Data truth rule
 
 Visual components must reflect actual engine state.
 
@@ -1343,18 +853,16 @@ Forbidden:
 - fake spectrum;
 - fake meters;
 - controls with no backing parameter;
-- visual “modulation” not tied to a real route;
+- visual modulation not tied to a real route;
 - decorative playheads not synchronized to transport.
 
-If the engine does not currently provide required data, the component remains unimplemented or shows an explicit unavailable state.
+If data is unavailable, show an explicit unavailable/empty state.
 
 ---
 
-# 28. Realtime boundary
+# 17. Realtime boundary
 
 No complex visualization may read mutable DSP structures directly.
-
-Allowed flow:
 
 ```text
 DSP/audio thread
@@ -1368,86 +876,113 @@ UI repaint rate is independent from audio block rate.
 
 ---
 
-# 29. Definition of Done for a catalog element
+# 18. Shared vs product-specific implementation
 
-An element is complete only when:
+## Shared `vox-ui`
 
-1. purpose is defined;
-2. ownership is defined: shared vs product-specific;
-3. supported states are defined;
-4. backing data/parameters are identified;
-5. interactions are defined;
-6. scaling works;
-7. visual tokens come from VOX UI;
-8. no realtime-safety violation exists;
-9. empty/error states exist where required;
-10. it has no fake functionality.
+Should contain:
+
+- tokens;
+- typography;
+- `VoxLookAndFeel`;
+- generic controls;
+- graph/meter bases;
+- envelope/filter response;
+- keyboard base;
+- mixer primitives;
+- shared interaction grammar.
+
+## Electronic Engine product layer
+
+Owns compositions for:
+
+- Psy Bass;
+- Lead;
+- Acid;
+- Atmos;
+- Semantic FX / FX workflows;
+- Instrument Rack;
+- Pattern Editor;
+- Piano Roll;
+- per-synth Arpeggiator;
+- per-synth Step Sequencer;
+- Pattern Generator;
+- Modulation Matrix;
+- Routing/Zones.
+
+## Drums product layer
+
+Owns:
+
+- Drum Pad/Grid;
+- Drum Voice Editor;
+- Sample Editor composition;
+- Choke Groups;
+- Drum Sequencer.
+
+## Mastering product layer
+
+Owns:
+
+- Module Chain;
+- Loudness workflow;
+- True Peak workflow;
+- reference/A-B workflow;
+- mastering analyzer workspace.
 
 ---
 
-# 30. Canonical product map
+# 19. Implementation rule
+
+A complex widget is composed rather than painted as one monolithic component.
+
+Example:
 
 ```text
-VOX UI CORE
-├── Controls
-├── Panels
-├── Graphs
-├── Meters
-├── Keyboard
-├── Mixer primitives
-└── Interaction grammar
-
-VOX ELECTRONIC ENGINE
-├── Instrument Rack
-├── Bass
-├── Kick
-├── Acid
-├── Lead
-├── Atmos
-├── Semantic FX
-├── Piano Roll
-├── Step Sequencer
-├── Arpeggiator
-├── Pattern Generator
-├── Modulation Matrix
-├── Routing / Zones
-└── FX Chain
-
-VOX DRUMS ENGINE
-├── Drum Grid
-├── Drum Pad
-├── Sample Editor
-├── Drum Voice
-├── Velocity Editor
-├── Choke Groups
-└── Drum Sequencer
-
-VOX MASTERING ENGINE
-├── Module Chain
-├── Spectrum
-├── Loudness
-├── True Peak
-├── Gain Reduction
-├── Stereo / Correlation
-├── Transfer Curves
-└── A/B Reference
+VoxLeadPanel
+├── VoxOscillatorPanel
+├── VoxFilterPanel
+├── VoxEnvelopeEditor
+├── VoxUnisonPanel
+├── VoxArpeggiator        ← capability of Lead
+├── VoxMacroPanel
+└── VoxModulationMatrix
 ```
+
+Expanded editing:
+
+```text
+Lead Part / PATTERN
+└── VoxPatternEditor
+    ├── VoxPianoRoll or VoxStepSequencer
+    ├── VoxArpeggiator controls
+    ├── lanes
+    ├── Pattern preset
+    └── playhead/generator tools
+```
+
+---
+
+# 20. Definition of Done
+
+A component is complete only when:
+
+1. purpose is defined;
+2. ownership is defined: shared vs product-specific;
+3. backing data/parameters are identified;
+4. interactions/states are defined;
+5. scaling works;
+6. visual tokens come from VOX UI;
+7. realtime safety is preserved;
+8. empty/error states exist where required;
+9. it has no fake functionality.
 
 ---
 
 ## Canonical rule
 
-**Do not design a screen first and invent controls inside it.**
+**Design tokens → primitive → audio primitive → workflow widget → page → product.**
 
-The implementation order is:
+For Electronic Engine specifically:
 
-```text
-design tokens
-→ primitive
-→ audio primitive
-→ workflow widget
-→ page
-→ product
-```
-
-If a new conceptual UI element is required, it must be added to this catalog before multiple incompatible local implementations appear.
+> Arp/sequence/piano-roll/pattern tools belong to the selected synth Part. Drums belongs to Vox Drums Engine. Shared appearance does not erase product or state ownership boundaries.
