@@ -1,22 +1,24 @@
-# VOX ELECTRONIC ENGINE — Visual Reference Specification v1.0
+# VOX ELECTRONIC ENGINE — Visual Reference Specification v1.1
 
 **Status:** CANON / normative extension of `UI_DESIGN_SYSTEM.md`  
 **Purpose:** make the accepted reference screens implementation-ready instead of leaving visual interpretation to an agent.  
-**Applies to:** Vox Electronic Engine and, where marked shared, the wider VOX plugin family.
+**Applies to:** Vox Electronic Engine. Shared family rules may be reused by other VOX products, but product-specific workflows remain separate.
 
 ---
 
 ## 1. Source of truth
 
-The accepted reference set defines the intended production visual language for these workflows:
+The accepted Electronic Engine reference set defines the intended production visual language for these workflows:
 
 - Psy Bass
 - Lead
 - Acid
 - Atmos / Texture
 - FX Engine
-- Arp / Sequence
-- Drums
+
+The Arp / Sequence reference is retained only as a **workflow/editor reference for synth Pattern/Arp capabilities**. It is **not** a standalone rack instrument or engine identity.
+
+The Drums reference belongs to **Vox Drums Engine**, a separate product. It is not part of the Electronic Engine product canon.
 
 The references are not pixel-perfect implementation blueprints. They establish **hierarchy, density, component grammar, proportions, visual states, and interaction patterns**. The implementation must preserve those properties while remaining responsive and scale-safe.
 
@@ -31,7 +33,58 @@ If a page implementation conflicts with this document, the page is wrong unless 
 
 ---
 
-# 2. Global shell canon
+# 2. Product-boundary canon
+
+## 2.1 Electronic Engine rack identities
+
+Electronic Engine rack slots represent actual Parts/instruments/effect modules such as:
+
+- Psy Bass;
+- Acid;
+- Lead;
+- Atmos / Texture;
+- FX Engine or another explicitly supported electronic module.
+
+A sequencing tool does not become a rack identity merely because it has a large editor.
+
+## 2.2 Arp / Sequence ownership
+
+Arpeggiator, phrase and sequence tools belong to the **currently selected synth/Part**.
+
+They may be presented as:
+
+- an `ARPEGGIATOR / PHRASE` panel inside `Sound`;
+- the selected instrument's `PATTERN` page;
+- an expanded Pattern editor;
+- a piano-roll / lane editor associated with the selected Part.
+
+They must not create:
+
+- a separate `Arp / Sequence` rack slot;
+- a separate hero identity;
+- a separate MIDI Part unless the engine model explicitly defines one in the future.
+
+Sequence state, preset state and generated material remain owned by the selected instrument/Part.
+
+## 2.3 Drums ownership
+
+Drums is a separate product: **Vox Drums Engine**.
+
+The Electronic Engine must not implement:
+
+- a Drums rack slot;
+- drum-pad bank;
+- drum kit editor;
+- multi-row drum sequencer;
+- drum-specific sample workflow
+
+as Electronic Engine instruments merely because those mock-ups share the VOX visual system.
+
+Drums may consume the same `vox-ui` primitives in its own repository/product.
+
+---
+
+# 3. Global shell canon
 
 Every Electronic Engine screen uses the same shell.
 
@@ -53,7 +106,7 @@ Every Electronic Engine screen uses the same shell.
 
 The shell is persistent. Switching instruments must not cause the entire plugin layout to jump.
 
-## 2.1 Global Header
+## 3.1 Global Header
 
 Canonical contents:
 
@@ -72,7 +125,7 @@ Rules:
 - MIDI activity uses a small cyan indicator;
 - CPU is a compact status visualization, not a large meter.
 
-## 2.2 Instrument Header
+## 3.2 Instrument Header
 
 Canonical contents:
 
@@ -84,27 +137,33 @@ Instrument selector | previous | next | favourite | Channel selector
 
 The title is the strongest typographic element below the brand.
 
-## 2.3 Main Navigation
+## 3.3 Main Navigation
 
 Canonical visual grammar:
 
 - full-width horizontal segmented tabs;
 - active tab uses cyan fill/edge treatment;
 - inactive tabs remain dark;
-- tabs are product/workflow level, not individual parameter sections;
-- instrument pages may expose different tab labels, but geometry must remain stable.
+- tabs are workflow-level, not individual parameter sections;
+- geometry remains stable between instruments.
 
-Examples:
+Primary synth grammar:
 
 ```text
 SOUND | PATTERN | ROUTING | ZONES | MACROS | ADVANCED
-FX | ROUTING | MODULATION | MACROS | SEQUENCER | ADVANCED
-SOUND | PATTERN | MIXER | ROUTING | ZONES | MACROS | ADVANCED
 ```
+
+FX-oriented modules may use:
+
+```text
+FX | ROUTING | MODULATION | MACROS | SEQUENCER | ADVANCED
+```
+
+`PATTERN` is the preferred home for expanded arp/sequence editing for synth Parts.
 
 ---
 
-# 3. Instrument Rack canon
+# 4. Instrument Rack canon
 
 The left rail is a persistent 16-slot rack in Electronic Engine.
 
@@ -115,7 +174,7 @@ slot number | identity thumbnail/icon | name      | MIDI channel | power
                                       | subtitle
 ```
 
-## 3.1 Selected state
+## 4.1 Selected state
 
 Selected slot:
 
@@ -124,9 +183,9 @@ Selected slot:
 - thumbnail remains visible;
 - active power icon cyan;
 - name remains primary text;
-- selected state must not depend on colour alone: outline + fill + text hierarchy are combined.
+- selected state must not depend on colour alone.
 
-## 3.2 Empty state
+## 4.2 Empty state
 
 Empty slots:
 
@@ -135,27 +194,25 @@ Empty slots:
 - power indicator reduced/muted;
 - visual weight significantly lower than occupied slots.
 
-## 3.3 Identity thumbnails
+## 4.3 Identity thumbnails
 
-Instrument thumbnails are allowed as small identity assets in the rack and hero banner. They are **not** control surfaces and must not carry essential state.
+Instrument thumbnails are allowed as small identity assets in the rack and hero banner. They are not control surfaces and must not carry essential state.
 
-Suggested product accents visible in accepted references:
+Suggested product accents:
 
 - Psy Bass: cyan/blue;
 - Acid: green;
 - Lead: violet;
 - Atmos: ice-blue;
-- FX: cyan/blue;
-- Arp: cyan;
-- Drums: cyan.
+- FX: cyan/blue.
 
-These accents are secondary identity cues. The family-level interaction accent remains VOX cyan.
+There is no `identity.arp` or `identity.drums` token in Electronic Engine.
 
 ---
 
-# 4. Hero / Identity Banner
+# 5. Hero / Identity Banner
 
-Each major instrument may use a shallow banner directly below the workflow tabs.
+Each major Electronic Engine instrument may use a shallow banner directly below the workflow tabs.
 
 Purpose:
 
@@ -178,12 +235,13 @@ Rules:
 - artwork must not reduce readability;
 - artwork uses a dark overlay/low luminance behind text;
 - banner height remains shallow relative to active workspace;
-- different instruments may have different artwork and accent hue;
-- banner must be removable/collapsible in future compact layouts without losing functionality.
+- banner must be removable/collapsible in compact layouts without losing functionality.
+
+Pattern/Arp editors use the selected synth's identity. They do not get a separate Arp hero banner.
 
 ---
 
-# 5. Panel grammar
+# 6. Panel grammar
 
 Accepted screens use dense modular panels rather than one large undifferentiated surface.
 
@@ -197,49 +255,23 @@ labels
 values
 ```
 
-## 5.1 Panel header
+Rules:
 
 - uppercase or small-caps semantic title;
 - optional small icon;
 - power/bypass at the left edge where relevant;
 - optional selector/actions on the right;
-- no oversized header bars;
-- controls inside header align to the 4 px grid.
-
-## 5.2 Panel borders
-
 - 1 px subtle blue border;
 - radius approximately 4–6 px;
-- neighbouring panels separated by narrow consistent gutters;
-- raised panels may be slightly lighter than the page background;
-- avoid card shadows; use contrast and borders instead.
-
-## 5.3 Density
-
-Reference screens intentionally use professional DAW density:
-
-- multiple logical panels visible without scrolling at 1440×1080 reference size;
-- parameter labels are compact;
-- graphs share space with controls;
-- unnecessary explanatory paragraphs are avoided inside the workspace.
+- narrow consistent gutters;
+- no card shadows;
+- multiple logical panels remain visible without scrolling at the 1440×1080 reference size.
 
 ---
 
-# 6. Knob canon
+# 7. Knob canon
 
 The accepted references refine `VoxKnob`.
-
-Visual anatomy:
-
-```text
-      value arc / modulation arc
-            ╭──────╮
-           │  body │
-            ╰──────╯
-              ↑ marker
-            Label
-             Value
-```
 
 Rules:
 
@@ -249,17 +281,15 @@ Rules:
 - bright short position marker;
 - no photorealistic knob texture;
 - no giant glow;
-- value arc is the dominant indication;
-- label and numeric value are always readable without hover;
-- small knobs are acceptable in dense workflow panels.
+- label and numeric value always readable without hover;
+- small knobs are acceptable in dense workflow panels;
+- modulation range is visually distinct from the base value.
 
-Optional instrument-colour overlays may be used for specialised graphs or identity, but ordinary parameter knobs should normally remain cyan to preserve family consistency.
+Ordinary parameter knobs remain VOX cyan. Instrument colour is primarily for identity artwork and specialised graph content.
 
 ---
 
-# 7. Graph canon
-
-The reference set establishes several graph families.
+# 8. Graph canon
 
 Shared rules:
 
@@ -267,53 +297,47 @@ Shared rules:
 - subtle grid;
 - cyan or instrument-accent curve;
 - restrained low-opacity fill;
-- data is primary; ornamentation is secondary;
-- axes/labels appear only where useful;
+- data is primary;
+- axes/labels only where useful;
 - no fake animation.
 
-## 7.1 Waveform / oscillator graph
-
-Used in Psy Bass / Lead / samples.
+## 8.1 Waveform / oscillator graph
 
 - line waveform centred vertically;
-- optional light glow confined to the curve;
-- navigation/selector may sit immediately below or above;
-- waveform must correspond to selected/generated content.
+- optional restrained curve glow;
+- selector/navigation adjacent to the graph;
+- waveform corresponds to selected/generated content.
 
-## 7.2 Filter response
-
-Canonical axes:
+## 8.2 Filter response
 
 - logarithmic frequency horizontal scale;
 - optional dB vertical scale;
 - response curve with subtle area fill;
 - filter selector in panel header.
 
-## 7.3 Envelope
+## 8.3 Envelope
 
-- editable node points may be shown;
+- editable node points where supported;
 - selected node cyan/bright accent;
-- ADSR stage letters appear below relevant controls;
-- visual curve and numeric knobs remain synchronized.
+- ADSR stage letters aligned with numeric controls;
+- visual curve and parameter state remain synchronized.
 
-## 7.4 Modulation graph
+## 8.4 Modulation graph
 
-Can represent:
+Reusable graph for:
 
 - ENV;
 - LFO;
 - stepped sequence;
 - sample & hold/random.
 
-Tabs above the graph select the modulation source. Do not duplicate a separate unique graph implementation for every source.
+Do not create a unique graph renderer per modulation source.
 
 ---
 
-# 8. Footer / Performance keyboard
+# 9. Footer / Performance keyboard
 
-The accepted screens use a persistent bottom performance area.
-
-Structure:
+The accepted synth screens use a persistent bottom performance area.
 
 ```text
 Keyboard | Chords | Scale tabs
@@ -325,16 +349,13 @@ Rules:
 
 - keyboard spans nearly the full content width;
 - octave `C` labels are visible;
-- pressed/active notes use cyan;
-- Pitch and Mod controls remain narrow vertical strips;
-- footer should be shareable between synth-like instruments;
-- instrument-specific footer controls may be added on the right but must not destroy keyboard geometry.
+- pressed notes use cyan;
+- Pitch and Mod remain narrow vertical controls;
+- footer geometry remains stable between synth Parts.
 
 ---
 
-# 9. Psy Bass page canon
-
-Layout emphasis:
+# 10. Psy Bass page canon
 
 ```text
 Row 1: Oscillator | Filter | Amp Envelope
@@ -342,8 +363,6 @@ Row 2: Drive/Character | Accent | Performance
 Row 3: Modulation | Matrix
 Footer: Keyboard
 ```
-
-Psy Bass should feel compact, technical and low-frequency focused.
 
 Required semantic groups:
 
@@ -358,15 +377,13 @@ Required semantic groups:
 - Mod Matrix;
 - Keyboard.
 
-The page must reflect actual engine parameters. Do not add unused synth controls only because they appear in a generic reference.
+Pattern generation and sequence editing for Psy Bass belong to its `PATTERN` workflow and state; they do not create another Part.
 
 ---
 
-# 10. Lead page canon
+# 11. Lead page canon
 
-Lead uses higher visual complexity than Psy Bass and introduces a violet identity accent in graphs/artwork.
-
-Recommended layout:
+Lead uses higher visual complexity and a violet identity accent in graphs/artwork.
 
 ```text
 Row 1: Oscillator | Filter | Amp Envelope
@@ -378,7 +395,7 @@ Footer: Keyboard
 
 Semantic emphasis:
 
-- supersaw/wavetable-style oscillator identity;
+- supersaw/wavetable oscillator identity;
 - morph / sync / FM / ring / noise where implemented;
 - unison and stereo spread;
 - glide / legato;
@@ -387,15 +404,13 @@ Semantic emphasis:
 - arp/phrase integration;
 - modulation matrix.
 
-Violet is a **content accent**, not a replacement for cyan as the global interaction colour.
+The compact `Arpeggiator / Phrase` panel is an embedded synth module. Opening its detailed editor switches to the Lead Part's `PATTERN` view rather than selecting another rack instrument.
 
 ---
 
-# 11. Acid page canon
+# 12. Acid page canon
 
 Acid is more sequencer-centric than the general synth layout.
-
-Recommended structure:
 
 ```text
 Top: Oscillator | Filter | Envelope | Drive | Accent | Slide | Output
@@ -404,7 +419,7 @@ Bottom: Modulation | Performance | Play Mode
 Footer: Keyboard
 ```
 
-Canonical Acid step lanes visible in the accepted reference:
+Canonical Acid lanes:
 
 - Note;
 - Accent;
@@ -412,17 +427,15 @@ Canonical Acid step lanes visible in the accepted reference:
 - Gate;
 - Octave.
 
-The current generic sequencer can expose additional supported lanes, but Acid mode should prioritise the 303 workflow.
+The sequencer is part of the Acid instrument. Pattern preset, sequence state and playback belong to Acid's selected Part.
 
-Acid identity may use green in artwork/waveform-specific cues while active controls remain readable in VOX cyan.
+Acid identity may use green in artwork/waveform cues while active controls remain VOX cyan.
 
 ---
 
-# 12. Atmos / Texture page canon
+# 13. Atmos / Texture page canon
 
 Atmos is layered and visualization-heavy.
-
-Recommended structure:
 
 ```text
 Row 1: Layer A Sample/Granular | Layer B Texture | Layer Mix
@@ -434,20 +447,20 @@ Footer: Keyboard
 Visual semantics:
 
 - long waveforms are acceptable for layers;
-- texture/spectral graphics may be denser than synth waveforms;
-- XY morph is a first-class performance control;
-- longer time values need enough label width;
-- motion/evolution should be represented by real parameter state or safe visualization snapshots.
+- spectral graphics may be denser than synth waveforms;
+- XY morph is first-class;
+- long time values need sufficient label width;
+- motion/evolution uses real state or safe visualization snapshots.
+
+If Atmos gains sequencing, it is exposed as the selected Atmos Part's Pattern workflow.
 
 ---
 
-# 13. FX Engine page canon
+# 14. FX Engine page canon
 
-FX differs from instrument synth pages because signal flow is primary.
+FX differs from synth pages because signal flow is primary.
 
-## 13.1 Effect Chain
-
-The chain is a visual horizontal signal path:
+## 14.1 Effect Chain
 
 ```text
 IN → FILTER → DISTORTION → CHORUS → DELAY → REVERB → + → OUT
@@ -456,40 +469,40 @@ IN → FILTER → DISTORTION → CHORUS → DELAY → REVERB → + → OUT
 Rules:
 
 - modules are cards;
-- arrows clearly show signal direction;
+- arrows show signal direction;
 - selected module has stronger border/identity;
-- bypass is visually obvious;
-- chain supports serial/parallel mode where implemented;
-- add/remove/reorder controls live near the chain, not scattered around parameter panels.
+- bypass is obvious;
+- serial/parallel mode where implemented;
+- add/remove/reorder controls stay near the chain.
 
-## 13.2 Module editor panels
+## 14.2 Module editor panels
 
-Below the chain, selected/relevant modules expose dedicated parameter panels.
-
-Examples in reference:
+Examples:
 
 - Reverb with response/decay visualization;
 - Delay with timing/feedback controls;
 - Distortion with transfer curve.
 
-## 13.3 FX performance
+## 14.3 FX performance
 
-Reference includes:
+Valid workflow widgets:
 
 - XY Performance;
 - Modulation;
 - Macros;
 - Preset snapshots / A-B.
 
-These are valid FX-specific workflow widgets.
+A sequencer/modulation timeline may exist as an FX workflow, but it belongs to the selected FX Part/module rather than a generic standalone Arp instrument.
 
 ---
 
-# 14. Arp / Sequence page canon
+# 15. Synth Pattern / Arp editor canon
 
-This page is editor-first. The sequence grid is the primary focal point.
+The former `Arp / Sequence` mock-up is reclassified as the **expanded Pattern editor for the selected synth Part**.
 
-Top transport/options row:
+It may be used by Lead, Bass, Acid, Atmos or future synth engines according to their capabilities.
+
+Top transport/options row may contain:
 
 ```text
 Play | Stop | Sync | Rate | Swing | Length | Octave | Scale Lock | Chord Mode | Randomize | Mutate
@@ -498,10 +511,10 @@ Play | Stop | Sync | Rate | Swing | Length | Octave | Scale Lock | Chord Mode | 
 Main editor:
 
 - left lane selector;
-- central step grid;
+- central step/piano-roll grid;
 - right pattern settings panel.
 
-Canonical lane families shown by the reference:
+Supported lane families may include:
 
 - Note;
 - Gate;
@@ -510,98 +523,39 @@ Canonical lane families shown by the reference:
 - Ratchet;
 - Tie;
 - Probability;
+- Accent;
+- Slide;
 - Mod 1;
 - Mod 2;
 - Mod 3.
 
-Bottom:
-
-- Modulation;
-- Routing;
-- Performance;
-- Keyboard.
-
 Rules:
 
+- only lanes supported by the selected instrument are shown;
 - active lane uses cyan selection treatment;
 - note lanes use blocks positioned by pitch;
 - velocity/probability use vertical bars;
 - tie/ratchet use distinct symbolic grammar;
 - modulation lanes use curves or stepped lines;
-- grid playhead must be synchronized to actual transport.
+- playhead is synchronized to actual transport;
+- editor header always shows the owning Part/instrument;
+- switching rack Parts switches the Pattern data context;
+- no independent `Arp / Sequence` preset/state namespace unless explicitly required by the instrument contract.
 
----
-
-# 15. Drums page canon
-
-Drums is pad/sample/sequencer oriented rather than synth oriented.
-
-Recommended structure:
-
-```text
-Row 1: Drum Pad Bank | Sample Waveform | Amp Envelope
-Row 2: Filter | Transient | Pitch | Performance
-Row 3: Multi-row Drum Step Sequencer
-Footer: Keyboard / Drum Map controls
-```
-
-## 15.1 Drum Pad Bank
-
-Canonical compact pad grid:
-
-- Kick;
-- Snare;
-- Clap;
-- Closed Hat;
-- Open Hat;
-- Percussion;
-- Rim / FX;
-- expandable in the actual product.
-
-Selected pad uses stronger cyan fill/border.
-
-## 15.2 Sample panel
-
-Contains:
-
-- sample selector/name;
-- waveform;
-- Reverse;
-- Normalize;
-- One Shot;
-- Loop;
-- sample duration/playhead where data is available.
-
-## 15.3 Drum sequencer
-
-Rows correspond to drum voices.
-
-Each row may provide:
-
-- Mute;
-- Solo;
-- step gates;
-- velocity;
-- probability;
-- output route.
-
-Step cells are square/rectangular and visually distinct from the melodic piano-roll grammar.
+Compact Sound-page `Arpeggiator / Phrase` controls and the full Pattern editor operate on the same underlying synth sequencing state.
 
 ---
 
 # 16. Accent-colour policy refined
-
-The accepted references use instrument-specific hues selectively.
 
 Canonical rule:
 
 - **VOX cyan** = global interaction, selection, focus, active controls;
 - **instrument accent** = identity artwork, waveform/graph content, selected specialised module;
 - **danger red** = Panic/destructive/error only;
-- **green** must not become a global success colour if it is being used as Acid identity inside that context;
-- product accents must never reduce state readability.
+- product accents never reduce state readability.
 
-Suggested semantic accents:
+Electronic Engine identity accents:
 
 ```text
 identity.psyBass     blue/cyan
@@ -609,17 +563,15 @@ identity.acid        green
 identity.lead        violet
 identity.atmos       ice-blue
 identity.fx          cyan/blue
-identity.arp         cyan
-identity.drums       cyan
 ```
 
-Exact identity hues must be tokenised before implementation.
+Arp/Pattern uses the owning instrument's identity accent. It has no independent identity colour.
 
 ---
 
 # 17. Layout proportions
 
-At the 1440×1080 reference canvas, use these approximate proportions rather than literal fixed pixels:
+At the 1440×1080 reference canvas, use approximate proportions rather than literal fixed pixels:
 
 ```text
 Global Header      ~6–7% of height
@@ -633,10 +585,10 @@ Main Workspace      remaining width
 
 Rules:
 
-- rack width remains stable between instruments;
+- rack width remains stable;
 - footer height remains stable between synth-like instruments;
 - panel geometry may vary by workflow;
-- no element may depend on the exact 1440×1080 size.
+- no element depends on the exact 1440×1080 size.
 
 ---
 
@@ -661,8 +613,6 @@ When space increases:
 
 # 19. Artwork asset rules
 
-Accepted screens use atmospheric artwork heavily enough that it needs explicit governance.
-
 Artwork may appear in:
 
 - hero banners;
@@ -678,13 +628,13 @@ Requirements:
 - scale/crop with aspect-fill semantics;
 - no text embedded in artwork;
 - no essential state encoded in imagery;
-- fallback UI must remain usable if an artwork asset is missing.
+- fallback UI remains usable if artwork is missing.
 
 ---
 
 # 20. Implementation mapping
 
-Shared components required to reproduce the accepted references:
+Shared components required by Electronic Engine:
 
 ```text
 VoxGlobalHeader
@@ -720,12 +670,10 @@ VoxEffectSlot
 VoxStepSequencer
 VoxPianoRoll
 VoxArpeggiator
-VoxDrumPadBank
-VoxDrumSequencer
-VoxSampleEditor
+VoxPatternEditor
 ```
 
-Product pages should **compose** these components rather than reimplementing their visual rules.
+Drum-specific components such as `VoxDrumPadBank`, `VoxDrumSequencer` and drum sample workflow components belong to Vox Drums Engine and are deliberately excluded from this Electronic Engine mapping.
 
 ---
 
@@ -739,15 +687,9 @@ Every significant UI PR must include screenshots at minimum:
 one non-default selected instrument/workflow
 ```
 
-For components with state:
+For sequencing work, screenshot review must demonstrate the Pattern editor while a real synth Part is selected, proving ownership is visually unambiguous.
 
-- normal;
-- selected/active;
-- hover where practical;
-- disabled;
-- empty/missing-data state where applicable.
-
-A screenshot review must check:
+Review checks:
 
 - shell alignment;
 - consistent rack width;
@@ -758,11 +700,13 @@ A screenshot review must check:
 - graph grammar;
 - value legibility;
 - no clipped labels;
-- no default JUCE appearance leaking through.
+- no default JUCE appearance leaking through;
+- no standalone Arp/Sequence rack identity;
+- no Drums workflow inside Electronic Engine.
 
 ---
 
-# 22. Anti-patterns revealed by the references
+# 22. Anti-patterns
 
 Do not implement:
 
@@ -775,16 +719,22 @@ Do not implement:
 - button-like styling for static labels;
 - hidden numeric values that appear only on hover;
 - inconsistent footer heights between instruments;
-- arbitrary colour replacement of cyan for each product.
+- arbitrary colour replacement of cyan for each product;
+- `Arp / Sequence` as a standalone Electronic Engine Part;
+- Drums as an Electronic Engine rack instrument.
 
 ---
 
 # 23. Canonical rule
 
-The accepted references define **one product family, multiple workflows**.
+The Electronic Engine is **one host shell with multiple electronic Parts and their own workflows**.
 
-A user switching from Psy Bass → Acid → Lead → Atmos → FX → Arp → Drums should feel that the workflow changed, **not that a different vendor's plugin opened**.
+A user switching from Psy Bass → Acid → Lead → Atmos → FX should feel that the instrument/workflow changed, not that a different vendor's plugin opened.
+
+Pattern, phrase, piano-roll and arpeggiator editors are subordinate to the currently selected synth Part.
+
+Vox Drums Engine and Mastering Engine remain separate products that share the VOX family design system.
 
 Therefore:
 
-> Global shell, interaction states, controls, graph grammar, spacing, typography and feedback remain VOX. Instrument identity is expressed through content, composition, artwork and limited accent colour — not by redesigning the UI system for every page.
+> Global shell, interaction states, controls, graph grammar, spacing, typography and feedback remain VOX. Product and instrument identity is expressed through workflow, content, artwork and limited accent colour — without blurring product boundaries or turning editors into fake standalone instruments.
