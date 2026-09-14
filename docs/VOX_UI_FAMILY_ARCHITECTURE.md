@@ -17,6 +17,51 @@ Initial consumers:
 - Mastering Engine;
 - future Ultima Vox VST3/Standalone products.
 
+These are separate products. Sharing VOX UI does **not** mean that product-specific instruments or workspaces are hosted inside another engine.
+
+## Product boundary rule
+
+### Vox Electronic / Trance Engine
+
+Owns electronic/synth-oriented instruments and workflows such as:
+
+- Psy Bass;
+- Acid;
+- Lead;
+- Atmos / Texture;
+- FX-oriented electronic sound modules;
+- synth performance and sequencing tools.
+
+**Arpeggiator, phrase and sequence editors are capabilities of a selected synth/Part, not standalone rack instruments.** They may appear as a panel on `Sound`, as a `Pattern` page, or as an expanded editor for the currently selected synth. They do not get their own identity slot, hero banner or separate engine identity.
+
+### Vox Drums Engine
+
+Is a separate plugin/engine. It owns drum-specific workflows such as:
+
+- drum pads;
+- kit/pad bank;
+- sample waveform/editor;
+- velocity editor;
+- choke groups;
+- per-pad routing;
+- multi-row drum sequencer.
+
+A Drums mock-up may be used as a family-style reference, but it is **not part of the Electronic Engine product specification** and must not be implemented as an Electronic Engine rack instrument.
+
+### Mastering Engine
+
+Is a separate plugin/engine. It owns:
+
+- spectrum analyzer;
+- loudness meter;
+- true-peak meter;
+- gain-reduction meter;
+- stereo/correlation visualization;
+- module chain;
+- A/B and reference controls.
+
+Mastering UI may be visually calmer and less accent-heavy, but still uses the same tokens and component grammar.
+
 ## Shared layer
 
 The following are family-level and must remain common unless the design-system version changes:
@@ -42,19 +87,24 @@ Canonical details are defined in [`UI_DESIGN_SYSTEM.md`](UI_DESIGN_SYSTEM.md).
 
 Product identity is created by workflow, content hierarchy and specialized widgets, not by replacing the shared theme.
 
-### Electronic / Trance Engine
+### Electronic / Trance Engine widgets
 
-Product widgets may include:
+May include:
 
 - instrument rack;
+- synth sound panels;
 - piano roll;
-- step sequencer;
+- per-synth arpeggiator/phrase editor;
+- per-synth step/pattern sequencer;
+- pattern generator;
 - modulation matrix;
 - sound/pattern/routing/zones/macros pages.
 
-### Vox Drums Engine
+The sequencing widgets operate on the currently selected Part/instrument. They are never represented as a separate `Arp / Sequence` Part unless a future product requirement explicitly introduces such an instrument type.
 
-Product widgets may include:
+### Vox Drums Engine widgets
+
+May include:
 
 - drum pads;
 - sample waveform/editor;
@@ -63,9 +113,9 @@ Product widgets may include:
 - per-pad routing;
 - drum sequencer.
 
-### Mastering Engine
+### Mastering Engine widgets
 
-Product widgets may include:
+May include:
 
 - spectrum analyzer;
 - loudness meter;
@@ -74,8 +124,6 @@ Product widgets may include:
 - stereo/correlation visualization;
 - module chain;
 - A/B and reference controls.
-
-Mastering UI may be visually calmer and less accent-heavy, but still uses the same tokens and component grammar.
 
 ## Source layout
 
