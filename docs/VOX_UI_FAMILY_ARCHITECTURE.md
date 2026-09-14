@@ -1,0 +1,163 @@
+# VOX UI Family Architecture
+
+**Status:** CANON
+
+## Goal
+
+All Ultima Vox audio products share one visual and interaction language while preserving product-specific workflows.
+
+The shared layer is **VOX UI**. Individual plugins compose it rather than reimplementing their own themes.
+
+## Product family
+
+Initial consumers:
+
+- Vox Electronic / Trance Engine;
+- Vox Drums Engine;
+- Mastering Engine;
+- future Ultima Vox VST3/Standalone products.
+
+## Shared layer
+
+The following are family-level and must remain common unless the design-system version changes:
+
+- colors and semantic color roles;
+- spacing grid and radii;
+- typography scale;
+- component states;
+- `VoxLookAndFeel`;
+- standard rotary controls;
+- standard buttons, toggles and combo boxes;
+- panels and section headers;
+- graph visual language;
+- meters visual language;
+- keyboard-focus/hover/disabled behavior;
+- scaling rules;
+- tooltip and fine-adjustment conventions;
+- realtime-safety boundary between UI and DSP.
+
+Canonical details are defined in [`UI_DESIGN_SYSTEM.md`](UI_DESIGN_SYSTEM.md).
+
+## Product-specific layer
+
+Product identity is created by workflow, content hierarchy and specialized widgets, not by replacing the shared theme.
+
+### Electronic / Trance Engine
+
+Product widgets may include:
+
+- instrument rack;
+- piano roll;
+- step sequencer;
+- modulation matrix;
+- sound/pattern/routing/zones/macros pages.
+
+### Vox Drums Engine
+
+Product widgets may include:
+
+- drum pads;
+- sample waveform/editor;
+- velocity editor;
+- choke groups;
+- per-pad routing;
+- drum sequencer.
+
+### Mastering Engine
+
+Product widgets may include:
+
+- spectrum analyzer;
+- loudness meter;
+- true-peak meter;
+- gain-reduction meter;
+- stereo/correlation visualization;
+- module chain;
+- A/B and reference controls.
+
+Mastering UI may be visually calmer and less accent-heavy, but still uses the same tokens and component grammar.
+
+## Source layout
+
+Current bootstrap location in this repository:
+
+```text
+libs/vox-ui/
+  CMakeLists.txt
+  Tokens.h
+  Typography.h
+  VoxLookAndFeel.h/.cpp
+  VoxComponents.h/.cpp
+```
+
+The module deliberately uses namespace:
+
+```cpp
+vox::ui
+```
+
+and must not depend on product DSP code.
+
+## Long-term distribution
+
+When a second plugin actively consumes the shared layer, move `libs/vox-ui` to a dedicated shared repository/library rather than maintaining copies.
+
+Recommended target repository name:
+
+```text
+ultima-vox/vox-ui
+```
+
+Consumers should pin a known version/tag or commit. Do not track an unpinned moving branch in release builds.
+
+Suggested versioning:
+
+```text
+v1.x  backward-compatible additions and visual refinements
+v2.x  breaking component/API or design-language changes
+```
+
+## Dependency direction
+
+Allowed:
+
+```text
+Product UI -> vox-ui -> JUCE GUI
+```
+
+Not allowed:
+
+```text
+vox-ui -> product DSP
+vox-ui -> PluginProcessor
+vox-ui -> presets/rack/instrument engines
+DSP realtime path -> vox-ui
+```
+
+## Migration rule
+
+Existing product UI does not need a big-bang rewrite.
+
+Migrate in this order:
+
+1. tokens;
+2. LookAndFeel;
+3. knob/button/combo primitives;
+4. panels/headers;
+5. graphs/meters;
+6. product pages;
+7. remove legacy local styling only after parity is confirmed.
+
+Every migration step must preserve plugin state, automation IDs and DSP behavior.
+
+## Acceptance criteria for a VOX-family plugin
+
+A plugin belongs to the common UI family when:
+
+- shared visual primitives come from VOX UI;
+- no private duplicate palette exists;
+- common controls have the same interaction semantics;
+- resize/scaling works at the family-supported scale factors;
+- specialized widgets visually derive from shared tokens;
+- UI changes do not alter realtime DSP safety;
+- product-specific deviations are documented rather than silently forked.
