@@ -7,7 +7,7 @@ on:
 
 jobs:
   windows-vst3:
-    runs-on: self-hosted
+    runs-on: windows-latest
     env:
       CMAKE_GENERATOR: Visual Studio 17 2022
 
@@ -31,6 +31,7 @@ jobs:
       - name: Package Vox Electronic Engine
         shell: powershell
         run: cmake --build build --config Release --target package
+
       - name: Upload VST3 and installer
         uses: actions/upload-artifact@v4
         with:
