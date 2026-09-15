@@ -9,6 +9,7 @@ Canonical documents:
 - [`docs/UI_VISUAL_REFERENCE_SPEC.md`](../../docs/UI_VISUAL_REFERENCE_SPEC.md)
 - [`docs/VOX_UI_FAMILY_ARCHITECTURE.md`](../../docs/VOX_UI_FAMILY_ARCHITECTURE.md)
 - [`docs/UI_FOUNDATION_CHECKLIST.md`](../../docs/UI_FOUNDATION_CHECKLIST.md)
+- [`docs/UI_FOUNDATION_DECISIONS.md`](../../docs/UI_FOUNDATION_DECISIONS.md)
 
 ## Canonical location and ownership
 
@@ -94,7 +95,7 @@ At the foundation checkpoint the module contains:
 - `VoxKnob`;
 - `VoxSectionHeader`.
 
-This is a bootstrap, not UI-1 completion. The authoritative gap list and acceptance checklist live in `docs/UI_FOUNDATION_CHECKLIST.md`.
+This is a bootstrap, not UI-1 completion. The authoritative gap list lives in `docs/UI_FOUNDATION_CHECKLIST.md`; locked implementation choices and corrections to draft code live in `docs/UI_FOUNDATION_DECISIONS.md`.
 
 ## UI-1 required shared primitives
 
