@@ -76,7 +76,8 @@ void VoxKnob::resized()
     label.setBounds (area.removeFromTop (14));
     area.removeFromBottom (14); // value row is painted by this component
 
-    const auto diameter = juce::jmin ({ getKnobDiameter(), area.getWidth(), area.getHeight() });
+    const auto diameter = juce::jmin (getKnobDiameter(),
+                                      juce::jmin (area.getWidth(), area.getHeight()));
     slider.setBounds (area.withSizeKeepingCentre (diameter, diameter));
 }
 
