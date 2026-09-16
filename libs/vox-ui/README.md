@@ -30,7 +30,7 @@ apps/*         thin plugin/application shells
 - design tokens;
 - typography factories and canonical text sizes;
 - `VoxLookAndFeel`;
-- knobs, buttons, toggles, combo boxes and tab primitives;
+- knobs, buttons, combo boxes and tab primitives;
 - panels and section headers;
 - generic graph/meter visual language;
 - shared interaction and visual-state rules.
@@ -82,47 +82,34 @@ JUCE 9.0.1
 C++20
 ```
 
-New shared UI code should target that baseline unless the repository-wide JUCE version is intentionally changed.
+## UI-1 implementation candidate
 
-## Current foundation state
-
-At the foundation checkpoint the module contains:
-
-- `Tokens.h` — canonical palette, spacing, radii and base component sizes;
-- `Typography.h` — canonical text sizes (font factories still need to be added);
-- `VoxLookAndFeel` — button background, rotary slider and combo-box drawing;
-- `VoxPanel`;
-- `VoxKnob`;
-- `VoxSectionHeader`.
-
-This is a bootstrap, not UI-1 completion. The authoritative gap list lives in `docs/UI_FOUNDATION_CHECKLIST.md`; locked implementation choices and corrections to draft code live in `docs/UI_FOUNDATION_DECISIONS.md`.
-
-## UI-1 required shared primitives
-
-Before the foundation is considered complete, `vox-ui` must provide at least:
+The UI-1 branch now contains:
 
 ```text
-VoxLookAndFeel
-VoxPanel
-VoxKnob
-VoxButton
-VoxComboBox
-VoxTabBar
-VoxSectionHeader
+Tokens.h
+Typography.h
+VoxLookAndFeel.h/.cpp
+VoxComponents.h        umbrella
+components/
+  VoxPanel.h/.cpp
+  VoxKnob.h/.cpp
+  VoxButton.h/.cpp
+  VoxComboBox.h/.cpp
+  VoxTabBar.h/.cpp
+  VoxSectionHeader.h/.cpp
+showcase/
+  CMakeLists.txt
+  Main.cpp
 ```
 
-and `VoxLookAndFeel` must define the shared visual grammar for:
+`VoxLookAndFeel` implements the shared fallback grammar for button background, rotary slider, combo box, toggle, linear slider and popup-menu items.
 
-```text
-rotary slider
-button
-combo box
-toggle
-linear slider
-popup menu
-```
+`VoxKnob` owns specialised knob rendering and semantic state. Its internal slider is used only for interaction/value/attachment. The canonical layout is label top / knob centre / always-visible value bottom. Small/Normal/Large diameters are 36/48/64 px, the rotary span is 270 degrees, and modulation appears automatically when a modulation snapshot is non-zero.
 
-The knob contract includes Small/Normal/Large sizes, a 270-degree rotary range, readable label/value presentation and a distinct modulation layer when modulation is present.
+Double-click reset is not hard-coded to zero: callers configure the real parameter default through `setDoubleClickResetValue()`.
+
+The implementation is not considered accepted until the Windows build, full test suite and real showcase screenshots have passed the UI-1 acceptance gate.
 
 ## CMake
 
@@ -133,9 +120,13 @@ add_subdirectory(libs/vox-ui)
 target_link_libraries(vst_ui PUBLIC vox_ui)
 ```
 
-The parent project must make JUCE targets available before adding this directory.
+The showcase is dev-only and disabled by default:
 
-The top-level project must actually add the subdirectory and link `vst_ui` against `vox_ui`; merely having `libs/vox-ui/CMakeLists.txt` in the tree is not integration.
+```cmake
+-DVOX_UI_BUILD_SHOWCASE=ON
+```
+
+CI explicitly enables it so shared UI sources compile on every UI PR without making the executable part of normal library consumers.
 
 ## Namespace
 
