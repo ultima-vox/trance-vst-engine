@@ -13,6 +13,7 @@ Canonical documents:
 - [`docs/UI_LAYOUT_RESPONSIVE_SPEC.md`](../../docs/UI_LAYOUT_RESPONSIVE_SPEC.md)
 - [`docs/UI_ACCESSIBILITY_SPEC.md`](../../docs/UI_ACCESSIBILITY_SPEC.md)
 - [`docs/UI_ACCEPTANCE_MATRIX.md`](../../docs/UI_ACCEPTANCE_MATRIX.md)
+- [`docs/UI_PRODUCTION_BACKLOG.md`](../../docs/UI_PRODUCTION_BACKLOG.md)
 - [`docs/UI_DESIGN_SYSTEM_FREEZE.md`](../../docs/UI_DESIGN_SYSTEM_FREEZE.md)
 - [`docs/VOX_UI_FAMILY_ARCHITECTURE.md`](../../docs/VOX_UI_FAMILY_ARCHITECTURE.md)
 - [`docs/UI_FOUNDATION_CHECKLIST.md`](../../docs/UI_FOUNDATION_CHECKLIST.md)
@@ -104,6 +105,8 @@ acceptance / visual QA
 ```
 
 `UI_DESIGN_SYSTEM_FREEZE.md` is the gate that must be accepted before later UI phases are allowed to invent new family-wide behaviour inside product code.
+
+`UI_PRODUCTION_BACKLOG.md` is the implementation/status map. It assigns every known capability a status (`Concept`, `Prototype`, `Implemented`, `Production`, `Deferred`), phase and release priority. Existing product code is not automatically considered Production merely because it already exists.
 
 ## UI-1 implementation candidate
 
