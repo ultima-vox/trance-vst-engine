@@ -21,10 +21,13 @@ UI_INTERACTION_STATE_SPEC.md
 UI_LAYOUT_RESPONSIVE_SPEC.md
 UI_ACCESSIBILITY_SPEC.md
 UI_ACCEPTANCE_MATRIX.md
+UI_PRODUCTION_BACKLOG.md
 VOX_UI_FAMILY_ARCHITECTURE.md
 ```
 
-No single file replaces the others. Together they define foundations, inventory, ownership, interactions, responsive behaviour, accessibility and acceptance.
+No single file replaces the others. Together they define foundations, inventory, ownership, interactions, responsive behaviour, accessibility, acceptance and implementation status.
+
+`UI_PRODUCTION_BACKLOG.md` is the canonical status/priority map. It must not redefine component behaviour; behavioural contracts remain in the normative specifications above.
 
 ---
 
@@ -43,7 +46,9 @@ Before DS-0 closes, the family must already know:
 - how modulation is visualised;
 - how drag/drop and selection behave;
 - how errors/empty/loading states appear;
-- how components are accepted as Production-ready.
+- how components are accepted as Production-ready;
+- which phase owns every known missing capability;
+- which items are explicitly Deferred rather than silently absent.
 
 ---
 
@@ -95,7 +100,7 @@ supported scale factors
 
 ## 5. Shared component inventory lock
 
-The master inventory is the existing catalog plus the production addendum.
+The master inventory is the existing catalog plus the production addendum. Implementation status and phase ownership are tracked in `UI_PRODUCTION_BACKLOG.md`.
 
 Known shared categories:
 
@@ -114,6 +119,18 @@ empty/loading/error patterns
 ```
 
 Not every component must be implemented before DS-0 closes. Every known component must have an explicit status and contract before product release depends on it.
+
+The status vocabulary is:
+
+```text
+Concept
+Prototype
+Implemented
+Production
+Deferred
+```
+
+A status may only advance according to `UI_ACCEPTANCE_MATRIX.md`.
 
 ---
 
@@ -204,14 +221,16 @@ It is responsible for demonstrating:
 
 A shared component should not be declared Production-ready without showcase coverage unless it is nonvisual infrastructure.
 
+The required Storybook sections and their phase ownership are tracked in `UI_PRODUCTION_BACKLOG.md`.
+
 ---
 
 ## 12. Implementation roadmap after DS-0
 
-Recommended order:
+Canonical phase order:
 
 ```text
-UI-1   foundation primitives
+UI-1   foundation primitives + Storybook baseline
 UI-2   graph base + filter response/reference panel
 UI-3   oscillator/waveform primitives
 UI-4   envelope/editable graph primitives
@@ -222,6 +241,8 @@ UI-8   timeline/editor grammar primitives
 UI-9   drag/drop, routing and matrix primitives
 UI-10  shell/page composition acceptance
 ```
+
+The detailed dependency and priority queue lives in `UI_PRODUCTION_BACKLOG.md`.
 
 Product-specific panels may be composed only from contracts already frozen or explicitly added through a design-system change.
 
@@ -234,7 +255,8 @@ After DS v1.0 freeze:
 - additive backward-compatible component/token additions are DS v1.x;
 - breaking API/state/interaction changes require explicit design-system review;
 - visual changes affecting family identity require screenshot baseline updates;
-- product-specific hacks are not a substitute for a shared DS change.
+- product-specific hacks are not a substitute for a shared DS change;
+- newly discovered components must be entered into the production backlog with status, owner and phase before implementation spreads into product code.
 
 ---
 
@@ -249,10 +271,15 @@ DS-0 can be marked accepted when:
 [ ] responsive/layout spec accepted
 [ ] accessibility spec accepted
 [ ] acceptance matrix accepted
+[ ] production backlog/status map accepted
+[ ] every known item has Concept/Prototype/Implemented/Production/Deferred status
+[ ] every non-Deferred missing capability has a phase owner
 [ ] UI-1 build is green
+[ ] UI-1 full ctest is green
 [ ] UI-1 showcase runs
 [ ] UI-1 100% screenshot reviewed
 [ ] UI-1 125% screenshot reviewed
+[ ] UI-1 75/150/200% scale checks completed
 [ ] unresolved items are explicit Deferred/roadmap entries
 ```
 
