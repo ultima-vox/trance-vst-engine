@@ -3,6 +3,9 @@
 #include "VoxComponents.h"
 #include "VoxLookAndFeel.h"
 #include "Tokens.h"
+#include "Typography.h"
+
+#include <array>
 
 namespace {
 
@@ -48,18 +51,24 @@ public:
                         { "routing", "Routing", true },
                         { "disabled", "Disabled", false } });
 
-        for (auto* component : { static_cast<juce::Component*> (&tabs),
-                                 &panel, &primary, &secondary, &toggle, &danger,
-                                 &iconButton, &disabled, &smallKnob, &normalKnob,
-                                 &largeKnob, &modKnob, &bipolarKnob,
-                                 &combo, &scaleBox, &powerHeader, &iconHeader,
-                                 &plainHeader })
+        const std::array<juce::Component*, 18> components {
+            &tabs, &panel, &primary, &secondary, &toggle, &danger,
+            &iconButton, &disabled, &smallKnob, &normalKnob,
+            &largeKnob, &modKnob, &bipolarKnob,
+            &combo, &scaleBox, &powerHeader, &iconHeader, &plainHeader
+        };
+
+        for (auto* component : components)
             addAndMakeVisible (*component);
 
         iconButton.setIcon (makeDiamondIcon());
         disabled.setEnabled (false);
 
-        for (auto* knob : { &smallKnob, &normalKnob, &largeKnob, &modKnob, &bipolarKnob })
+        const std::array<vox::ui::VoxKnob*, 5> knobs {
+            &smallKnob, &normalKnob, &largeKnob, &modKnob, &bipolarKnob
+        };
+
+        for (auto* knob : knobs)
         {
             knob->getSlider().setRange (0.0, 100.0, 0.1);
             knob->getSlider().setValue (55.0, juce::dontSendNotification);
@@ -157,7 +166,10 @@ public:
         auto buttonRow = content.removeFromTop (px (tokens::size::controlHeight));
         const auto buttonGap = px (tokens::spacing::sm);
         const auto buttonWidth = juce::jmax (72, (buttonRow.getWidth() - buttonGap * 5) / 6);
-        for (auto* button : { &primary, &secondary, &toggle, &danger, &iconButton, &disabled })
+        const std::array<vox::ui::VoxButton*, 6> buttons {
+            &primary, &secondary, &toggle, &danger, &iconButton, &disabled
+        };
+        for (auto* button : buttons)
         {
             button->setBounds (buttonRow.removeFromLeft (buttonWidth));
             buttonRow.removeFromLeft (buttonGap);
