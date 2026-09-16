@@ -5,8 +5,16 @@ Shared JUCE UI foundation for the Ultima Vox plugin family.
 Canonical documents:
 
 - [`docs/UI_DESIGN_SYSTEM.md`](../../docs/UI_DESIGN_SYSTEM.md)
-- [`docs/UI_COMPONENT_CATALOG.md`](../../docs/UI_COMPONENT_CATALOG.md)
 - [`docs/UI_VISUAL_REFERENCE_SPEC.md`](../../docs/UI_VISUAL_REFERENCE_SPEC.md)
+- [`docs/UI_COMPONENT_CATALOG.md`](../../docs/UI_COMPONENT_CATALOG.md)
+- [`docs/UI_COMPONENT_CATALOG_PRODUCTION_ADDENDUM.md`](../../docs/UI_COMPONENT_CATALOG_PRODUCTION_ADDENDUM.md)
+- [`docs/UI_FOUNDATIONS_TOKENS_SPEC.md`](../../docs/UI_FOUNDATIONS_TOKENS_SPEC.md)
+- [`docs/UI_INTERACTION_STATE_SPEC.md`](../../docs/UI_INTERACTION_STATE_SPEC.md)
+- [`docs/UI_LAYOUT_RESPONSIVE_SPEC.md`](../../docs/UI_LAYOUT_RESPONSIVE_SPEC.md)
+- [`docs/UI_ACCESSIBILITY_SPEC.md`](../../docs/UI_ACCESSIBILITY_SPEC.md)
+- [`docs/UI_ACCEPTANCE_MATRIX.md`](../../docs/UI_ACCEPTANCE_MATRIX.md)
+- [`docs/UI_PRODUCTION_BACKLOG.md`](../../docs/UI_PRODUCTION_BACKLOG.md)
+- [`docs/UI_DESIGN_SYSTEM_FREEZE.md`](../../docs/UI_DESIGN_SYSTEM_FREEZE.md)
 - [`docs/VOX_UI_FAMILY_ARCHITECTURE.md`](../../docs/VOX_UI_FAMILY_ARCHITECTURE.md)
 - [`docs/UI_FOUNDATION_CHECKLIST.md`](../../docs/UI_FOUNDATION_CHECKLIST.md)
 - [`docs/UI_FOUNDATION_DECISIONS.md`](../../docs/UI_FOUNDATION_DECISIONS.md)
@@ -82,6 +90,24 @@ JUCE 9.0.1
 C++20
 ```
 
+## DS-0 production contract
+
+The design system is no longer defined only by visual tokens and a component list. DS-0 adds normative contracts for:
+
+```text
+foundations/tokens
+interaction and state priority
+responsive/layout behaviour
+accessibility and keyboard semantics
+complete production component inventory
+realtime visualisation expectations
+acceptance / visual QA
+```
+
+`UI_DESIGN_SYSTEM_FREEZE.md` is the gate that must be accepted before later UI phases are allowed to invent new family-wide behaviour inside product code.
+
+`UI_PRODUCTION_BACKLOG.md` is the implementation/status map. It assigns every known capability a status (`Concept`, `Prototype`, `Implemented`, `Production`, `Deferred`), phase and release priority. Existing product code is not automatically considered Production merely because it already exists.
+
 ## UI-1 implementation candidate
 
 The UI-1 branch now contains:
@@ -102,6 +128,8 @@ showcase/
   CMakeLists.txt
   Main.cpp
 ```
+
+`Tokens.h` now contains the production foundation roles required by DS-0 in addition to the original bootstrap palette and spacing: semantic focus/selection aliases, opacity roles, stroke widths, icon metrics, control/layout metrics, graph metrics, motion timings and supported internal scale constants.
 
 `VoxLookAndFeel` implements the shared fallback grammar for button background, rotary slider, combo box, toggle, linear slider and popup-menu items.
 
