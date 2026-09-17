@@ -1,148 +1,296 @@
-# VOX ELECTRONIC ENGINE — UI DESIGN SYSTEM v1.0
+# VOX ELECTRONIC ENGINE — UI DESIGN SYSTEM v1.1
 
-**Статус:** CANON / обязательная спецификация для UI  
-**Назначение:** единая дизайн-система JUCE-интерфейса VST3/Standalone  
-**Проект:** `trance-vst-engine`  
-**Версия:** 1.0
+**Status:** CANON / mandatory specification  
+**Scope:** VOX family visual foundation + Electronic Engine implementation rules  
+**Repository:** `ultima-vox/vox-electronic-engine`  
+**Version:** 1.1
 
----
-
-## 1. Цель
-
-Эта спецификация задаёт единый визуальный язык, структуру компонентов и правила реализации интерфейса VOX Electronic Engine.
-
-Основные цели:
-
-- профессиональный внешний вид уровня коммерческого audio software;
-- единообразие всех инструментов и вкладок;
-- отсутствие локальных «самодельных» стилей;
-- масштабируемость UI;
-- повторное использование компонентов;
-- разделение визуального слоя и DSP;
-- отсутствие работы UI в realtime audio thread;
-- возможность добавлять новые инструменты без переделки базовой UI-архитектуры.
+This document is authoritative for new UI work in the repository. `VOX_UI_FAMILY_ARCHITECTURE.md` defines ownership boundaries; `UI_COMPONENT_CATALOG.md` defines the component inventory; `UI_VISUAL_REFERENCE_SPEC.md` defines reference-screen visual intent.
 
 ---
 
-## 2. Визуальное направление
+## 1. Product direction
 
-Стиль:
+Visual language:
 
 **Dark futuristic / professional electronic-music workstation**
 
-Ключевые признаки:
+Required qualities:
 
-- глубокий тёмно-синий/чёрный фон;
-- холодный cyan как основной accent;
-- высокая информационная плотность;
-- тонкие границы;
-- небольшие радиусы;
-- минимум декоративного шума;
-- glow используется только точечно;
-- интерфейс не должен выглядеть как game HUD;
-- интерфейс не должен выглядеть как generic JUCE demo;
-- основной акцент — читаемость, контроль и визуальная иерархия.
+- deep dark-blue/black base;
+- cold cyan as the primary accent;
+- high information density without clutter;
+- thin borders and restrained radii;
+- precise visual hierarchy;
+- minimal decorative noise;
+- glow only for meaningful emphasis;
+- commercial audio-software appearance;
+- deterministic layout and interaction;
+- no generic JUCE-demo appearance;
+- no game-HUD styling.
 
----
-
-## 3. Design tokens
-
-Все цвета, размеры, интервалы и радиусы должны быть объявлены централизованно.
-
-Рекомендуемый файл:
-
-```text
-Source/UI/Design/Tokens.h
-```
-
-### 3.1 Цвета
-
-```text
-bg.window          #06121D
-bg.panel           #0B1925
-bg.panelRaised     #102230
-bg.control         #0A1722
-bg.graph           #051019
-
-border.default     #1D3B50
-border.subtle      #122C3D
-
-accent.primary     #00DDF5
-accent.hover       #42EEFF
-accent.dim         #087B92
-
-text.primary       #E9F3FA
-text.secondary     #9AB2C5
-text.muted         #587487
-
-danger             #E4425D
-success            #32D296
-warning            #E3B341
-```
-
-### 3.2 Правила цвета
-
-- `accent.primary` используется только для:
-  - active state;
-  - selected state;
-  - текущего значения;
-  - важных realtime indicators;
-  - active modulation;
-  - текущей позиции;
-  - выделенного инструмента.
-- Не использовать cyan как фон каждого элемента.
-- Не вводить новые цвета локально.
-- Любой новый цвет должен сначала появиться в `Tokens.h`.
+The UI must prioritize control readability, parameter state, active workflow and realtime feedback over decoration.
 
 ---
 
-## 4. Сетка и интервалы
+## 2. Canonical architecture
 
-Базовая единица:
+The production architecture is:
+
+```text
+apps/*
+  plugin / standalone shell
+        |
+        v
+libs/ui/*
+  Vox Electronic Engine product UI
+        |
+        v
+libs/vox-ui/*
+  shared VOX design system
+        |
+        v
+JUCE GUI
+```
+
+### `libs/vox-ui`
+
+Owns family-wide primitives only:
+
+- tokens;
+- typography;
+- `VoxLookAndFeel`;
+- primitive controls;
+- generic graphs/meters;
+- interaction/state grammar;
+- shared layout constants.
+
+### `libs/ui`
+
+Owns Electronic Engine semantics:
+
+- instrument/Part rack;
+- synth panels;
+- product navigation;
+- preset workflows;
+- Sound/Pattern/Routing/Zones/Macros/Advanced pages;
+- sequencers, modulation matrix and other Electronic Engine workflow widgets.
+
+### `apps/*`
+
+Owns shell composition, editor lifetime, plugin/standalone bootstrap and wiring.
+
+### Forbidden legacy architecture
+
+Do not introduce new UI code under:
+
+```text
+Source/UI/
+```
+
+Any older instruction that recommends `Source/UI/Design`, `Source/UI/Components`, `Source/UI/Pages` or similar is obsolete.
+
+---
+
+## 3. Design-token authority
+
+All reusable visual values must come from:
+
+```text
+libs/vox-ui/Tokens.h
+libs/vox-ui/Typography.h
+```
+
+Local product code must not define a second palette, spacing scale, radius system, focus style or interaction timing system.
+
+A new reusable value must first be promoted into the shared tokens with semantic naming.
+
+Token families:
+
+```text
+colour
+spacing
+radius
+stroke
+opacity
+size
+focus
+graph
+meter
+interaction
+elevation
+```
+
+---
+
+## 4. Colour system
+
+Canonical semantic palette:
+
+```text
+background        #06121D
+panel             #0B1925
+panelRaised       #102230
+control           #0A1722
+controlHover      #0E2130
+graph             #051019
+overlay           #020910 @ 80%
+
+border            #1D3B50
+borderSubtle      #122C3D
+borderStrong      #2B5873
+
+accent            #00DDF5
+accentHover       #42EEFF
+accentDim         #087B92
+accentMuted       #0B4655
+
+text              #E9F3FA
+textSecondary     #9AB2C5
+textMuted         #587487
+textInverse       #06121D
+
+danger            #E4425D
+success           #32D296
+warning           #E3B341
+```
+
+### Accent rules
+
+`accent` is reserved for meaningful state:
+
+- active/selected state;
+- current value;
+- focus ring;
+- active modulation;
+- current transport/sequence position;
+- selected Part/instrument;
+- realtime indicator requiring attention.
+
+Do not use cyan as a generic panel fill or decorative outline on every component.
+
+### Status colour rules
+
+`danger`, `warning`, `success` communicate semantic state. They must not be used as arbitrary decoration.
+
+Critical states must also include shape, label, icon or text indication; colour alone is insufficient.
+
+---
+
+## 5. Spacing and grid
+
+Base spatial unit:
 
 ```text
 4 px
 ```
 
-Spacing tokens:
+Canonical scale:
 
 ```text
-space.1 = 4
-space.2 = 8
-space.3 = 12
-space.4 = 16
-space.5 = 20
-space.6 = 24
-space.8 = 32
+4 / 8 / 12 / 16 / 20 / 24 / 32 / 40
 ```
 
-Правило:
+Semantic defaults:
 
-> Все основные размеры, интервалы и отступы должны быть кратны 4 px, если нет технической причины отступить от этого правила.
+```text
+page padding        16 px
+panel padding       12 px
+section gap         12 px
+control gap          8 px
+```
+
+All primary layout geometry should follow the 4 px grid unless there is a technical rendering reason not to.
+
+Do not use arbitrary values such as 13, 17, 23 or 29 px for structural spacing.
 
 ---
 
-## 5. Радиусы
+## 6. Radius system
 
 ```text
-radius.small   = 4 px
-radius.medium  = 6 px
-radius.large   = 8 px
+small      4 px
+medium     6 px
+large      8 px
 ```
 
-Не использовать чрезмерно округлённые кнопки и панели.
+Default panel radius:
+
+```text
+6 px
+```
+
+Controls should remain compact and technical rather than pill-shaped.
 
 ---
 
-## 6. Базовый размер окна и масштабирование
+## 7. Stroke system
 
-Базовый reference canvas:
+```text
+hairline       1.0 px
+control        1.0 px
+focus          1.5 px
+graph          1.75 px
+graphStrong    2.0 px
+icon           1.75 px
+```
+
+Stroke weight is part of the family identity. Product components must not invent unrelated line weights.
+
+---
+
+## 8. Opacity system
+
+Canonical semantic values:
+
+```text
+disabled       0.35
+muted          0.60
+secondary      0.78
+grid           0.42
+hover overlay  0.08
+pressed        0.14
+glow           0.22
+full           1.00
+```
+
+Disabled state must remain legible but clearly inactive.
+
+---
+
+## 9. Typography
+
+Canonical typography is defined in `libs/vox-ui/Typography.h`.
+
+Primary hierarchy:
+
+```text
+Instrument Title    26 px  SemiBold
+Section Title       14 px  SemiBold / uppercase where appropriate
+Control Label       12 px  Regular/Medium
+Value / Secondary   11 px  Regular
+```
+
+Rules:
+
+- do not introduce random font sizes;
+- do not exceed four primary hierarchy levels without a design-system revision;
+- titles use `text`;
+- labels generally use `textSecondary`;
+- disabled/muted metadata uses `textMuted`;
+- numeric values must remain readable at every supported scale.
+
+---
+
+## 10. Reference canvas and scale
+
+Reference canvas:
 
 ```text
 1440 × 1080
 ```
 
-Поддерживаемые UI scale targets:
+Supported scale targets:
 
 ```text
 75%
@@ -152,208 +300,326 @@ radius.large   = 8 px
 200%
 ```
 
-UI не должен зависеть от абсолютного размера окна.
+Layouts must remain valid under resize and UI scaling.
 
-Запрещено строить весь интерфейс через набор глобальных hardcoded `setBounds(x, y, w, h)`.
+The UI must not be implemented as one global collection of hardcoded `setBounds(x, y, w, h)` calls.
 
----
-
-## 7. Типографика
-
-Используется ограниченный набор уровней.
-
-### Instrument Title
-
-```text
-24–28 px
-SemiBold
-```
-
-### Section Title
-
-```text
-13–14 px
-SemiBold
-UPPERCASE
-```
-
-### Control Label
-
-```text
-11–12 px
-Medium
-```
-
-### Value / Secondary
-
-```text
-10–11 px
-Regular
-```
-
-### Правила
-
-- Не вводить случайные размеры шрифта.
-- Не использовать более 4 основных уровней типографики без отдельного обоснования.
-- Primary text — `text.primary`.
-- Labels — `text.secondary`.
-- Disabled — `text.muted`.
+Relative rectangles, reusable layout helpers, nested layout regions or equivalent deterministic layout techniques are required.
 
 ---
 
-## 8. Компонентная библиотека
+## 11. Shared size tokens
 
-Все страницы интерфейса должны строиться из стандартных VOX-компонентов.
-
-Минимальный обязательный набор:
+Canonical baseline geometry:
 
 ```text
-VoxLookAndFeel
+control height              32 px
+compact control height      28 px
+tab height                  36 px
+top bar height              48 px
+Part header height          56 px
+keyboard min height        112 px
+keyboard preferred height  132 px
+
+knob small                  36 px
+knob normal                 48 px
+knob large                  64 px
+
+instrument slot             54–58 px
+icon small                  12 px
+icon normal                 16 px
+icon large                  20 px
+minimum hit target          28 px
+```
+
+A visual control may be smaller than its hit region only if the interaction target still respects the minimum hit-target rule.
+
+---
+
+## 12. Component ownership levels
+
+### Level A — shared primitives (`libs/vox-ui`)
+
+Examples:
+
+```text
 VoxPanel
 VoxKnob
+VoxLinearSlider
+VoxFader
 VoxButton
 VoxIconButton
 VoxToggle
+VoxSwitch
+VoxSegmentedControl
 VoxComboBox
-VoxTabBar
-VoxMeter
-VoxGraph
-VoxEnvelopeGraph
-VoxFilterGraph
-VoxInstrumentSlot
-VoxParameterLabel
+VoxTextInput
+VoxValueField
+VoxLabel
 VoxSectionHeader
-VoxKeyboard
+VoxTabBar
+VoxStatusIndicator
 VoxTooltip
+VoxDivider
 ```
 
-Нельзя создавать локальные визуальные вариации стандартных компонентов без изменения design system.
+### Level B — shared audio primitives (`libs/vox-ui` when generic)
+
+```text
+VoxWaveform
+VoxSpectrumAnalyzer
+VoxMeter
+VoxEnvelopeEditor
+VoxFilterResponse
+VoxXYPad
+VoxModulationGraph
+VoxKeyboard
+VoxMacroControl
+VoxModulationRing
+VoxStereoScope
+VoxCorrelationMeter
+VoxTransferCurve
+```
+
+### Level C — product workflow widgets (`libs/ui`)
+
+```text
+instrument rack
+preset browser workflow
+piano roll
+step sequencer
+arpeggiator
+modulation matrix
+routing matrix
+zone editor
+effect chain
+```
+
+### Level D — pages (`libs/ui`)
+
+```text
+Sound
+Pattern
+Routing
+Zones
+Macros
+Advanced
+FX
+Mixer-like product workspaces where required
+```
+
+Pages compose components; they must not invent private primitive styles.
 
 ---
 
-## 9. VoxPanel
+## 13. Global component state grammar
 
-Назначение:
-
-- Oscillator;
-- Filter;
-- Envelope;
-- Drive;
-- Accent;
-- Performance;
-- Modulation;
-- Matrix;
-- Routing;
-- Advanced sections.
-
-Стандарт:
-
-```text
-background : bg.panel
-border     : 1 px border.default
-radius     : 6 px
-padding    : 12 px
-```
-
----
-
-## 10. VoxKnob
-
-Основной rotary control.
-
-### Размеры
-
-```text
-Small   36 × 36
-Normal  48 × 48
-Large   64 × 64
-```
-
-### Состав
-
-- inactive arc;
-- active value arc;
-- central body;
-- indicator;
-- label;
-- value text;
-- optional modulation ring.
-
-### Диапазон дуги
-
-Рекомендуется:
-
-```text
-270°
-```
-
-Типичная геометрия:
-
-```text
-135° → 405°
-```
-
-### Цвета
-
-```text
-inactive arc   border.default
-active arc     accent.primary
-indicator      text.primary
-modulation     accent.hover / отдельный modulation layer
-```
-
-### Состояния
+Every interactive component supports the subset of these states that applies to it:
 
 ```text
 Normal
 Hover
 Pressed
 Focused
-Active
+Active / Selected
 Disabled
 Modulated
+Automated
+Error / Warning where semantically required
 ```
 
-### Правила
+Base state mapping:
 
-- Label всегда под или над knob согласно layout contract.
-- Значение отображается единообразно.
-- Не создавать уникальные knob styles для каждого инструмента.
-- Модификация должна быть визуально отделена от основного значения.
+```text
+Normal
+  background = control/panel as appropriate
+  border     = border
+  text       = text or textSecondary
+
+Hover
+  background = controlHover or subtle hover overlay
+  border     = accentDim
+
+Pressed
+  background = control + pressed overlay
+  border     = accentDim or accent
+
+Focused
+  visible focus ring = focusRing
+  focus must remain distinguishable from hover
+
+Active / Selected
+  accent is allowed as primary state indicator
+  selected state must remain obvious without hover
+
+Disabled
+  opacity = disabled
+  text    = textMuted
+  no active-looking accent
+
+Modulated
+  modulation indication is visually separate from base parameter value
+
+Automated
+  automation state must not replace the value indication
+```
+
+No product page may redefine these meanings locally.
 
 ---
 
-## 11. VoxComboBox
+## 14. Interaction tokens
 
-Стандартная высота:
-
-```text
-32 px
-```
-
-Стиль:
+Canonical interaction values:
 
 ```text
-background  bg.control
-border      border.default
-radius      4 px
-padding     8 px
+fine-adjust multiplier      0.10
+wheel-step multiplier       0.02
+tooltip delay              650 ms
+hover transition            90 ms
+state transition           120 ms
+page transition            140 ms
 ```
 
-Состояния:
+Animation is optional where JUCE/runtime constraints make it undesirable, but state meaning and final appearance are mandatory.
 
-```text
-Normal   border.default
-Hover    accent.dim
-Focused  accent.primary
-Disabled text.muted / lowered opacity
-```
+Animations must never run on the audio thread.
 
 ---
 
-## 12. Buttons
+## 15. Parameter interaction contract
 
-Типы:
+For continuous parameter controls:
+
+```text
+Drag             normal adjustment
+Shift + Drag     fine adjustment
+Double Click     reset to parameter default
+Mouse Wheel      optional globally-consistent adjustment
+Right Click      context/MIDI Learn only where implemented
+```
+
+Rules:
+
+- drag mode/sensitivity is consistent across all knobs;
+- reset uses the real parameter default;
+- textual value is available;
+- parameter state has one source of truth;
+- controls bind to processor/model state through safe mechanisms.
+
+Where `AudioProcessorValueTreeState` is used, standard attachments are preferred.
+
+---
+
+## 16. Focus and keyboard contract
+
+Keyboard focus must be visible and distinct from hover.
+
+Canonical focus treatment:
+
+```text
+colour     accent
+stroke     1.5 px
+inset      1 px
+gap         1 px
+```
+
+Focus must not rely on glow alone.
+
+Popup/select controls should support Escape-to-close and keyboard navigation where technically practical.
+
+---
+
+## 17. Icons
+
+Icons are vector-based and visually uniform.
+
+Preferred implementation:
+
+```text
+SVG / juce::Drawable / deterministic JUCE path
+```
+
+Canonical icon stroke:
+
+```text
+1.75 px
+```
+
+Forbidden:
+
+- emoji;
+- platform-font glyphs used as arbitrary icons;
+- mixed icon families;
+- inconsistent stroke weight.
+
+---
+
+## 18. VoxPanel
+
+Standard panel:
+
+```text
+background  panel
+border      1 px border
+radius      6 px
+padding     12 px
+```
+
+Raised panels may use `panelRaised` only when hierarchy requires it.
+
+Panels must not become decorative cards with heavy shadows.
+
+---
+
+## 19. VoxKnob
+
+Canonical sizes:
+
+```text
+Small    36 × 36
+Normal   48 × 48
+Large    64 × 64
+```
+
+Arc geometry:
+
+```text
+270° sweep
+135° -> 405°
+```
+
+Visual layers:
+
+```text
+inactive arc
+active value arc
+central body
+indicator
+label
+value text
+optional modulation ring
+optional automation indication
+```
+
+Colours:
+
+```text
+inactive arc   border
+active arc     accent
+indicator      text
+modulation     accentHover / dedicated secondary layer
+```
+
+The modulation ring must not obscure the base parameter value.
+
+Do not create instrument-specific knob skins.
+
+---
+
+## 20. Buttons / toggles / selectors
+
+### Button variants
 
 ```text
 Primary
@@ -363,729 +629,400 @@ Danger
 Icon
 ```
 
-Стандартная высота:
+Default height:
 
 ```text
 32 px
 ```
 
-### Primary
+Primary actions use accent sparingly. Secondary controls use dark surfaces and normal text hierarchy. Danger is reserved for destructive/critical actions such as Panic or destructive reset.
 
-- акцентная команда;
-- используется ограниченно.
-
-### Secondary
-
-- стандартные действия;
-- тёмный фон, светлый текст.
-
-### Toggle
-
-- переключаемое состояние;
-- active state должен быть очевиден без наведения.
-
-### Danger
-
-Используется для:
+### ComboBox / selector
 
 ```text
-Panic
-Reset-critical
-Destructive action
+height      32 px
+background  control
+border      border
+radius      4 px
+padding      8 px
 ```
 
-Цвет:
+### TabBar
 
 ```text
-danger
+height 36 px
 ```
+
+Active tabs must be obvious without hover. A full cyan fill is allowed when contrast remains appropriate; an accent indicator + raised active surface is also acceptable if globally standardized.
 
 ---
 
-## 13. VoxTabBar
+## 21. Graph language
 
-Используется для:
-
-```text
-SOUND
-PATTERN
-ROUTING
-ZONES
-MACROS
-ADVANCED
-```
-
-Высота:
+Generic graph surface:
 
 ```text
-36 px
+background       graph
+grid             graphGrid @ grid opacity
+curve            graphCurve
+curve width      1.75 px
+strong curve     2.0 px
+node diameter    7 px
+node hit area   16 px
 ```
 
-Active:
+Rules:
 
-```text
-background  accent.primary
-text        bg.window
-```
-
-Inactive:
-
-```text
-background  bg.control
-text        text.secondary
-border      border.default
-```
+- graphs represent actual state;
+- no fake realtime animation;
+- decorative gradients must remain subtle;
+- graph fill must not reduce curve readability;
+- interaction nodes use larger invisible hit regions than their visible dots.
 
 ---
 
-## 14. Instrument Rack
+## 22. Meter language
 
-Компонент:
-
-```text
-VoxInstrumentSlot
-```
-
-Рекомендуемая высота:
+Meter semantics use:
 
 ```text
-54–58 px
+low       success
+mid       warning
+high      danger
+track     meterTrack
 ```
 
-Структура:
+Baseline geometry:
 
 ```text
-01 | thumbnail | Psy Bass       CH1 | power
-                 Ultima Vox 1.0
+minimum width     6 px
+preferred width   8 px
+peak hold       900 ms
+peak fall      1400 ms
 ```
 
-Состояния:
-
-```text
-Active
-Inactive
-Empty
-Disabled
-Muted
-Soloed
-```
-
-### Active
-
-- cyan outline;
-- немного более яркий фон;
-- номер и power state хорошо различимы.
-
-### Empty
-
-- muted text;
-- без thumbnail;
-- inactive controls visually reduced.
+Meter ranges and thresholds must follow the actual signal domain; colour thresholds are not substitutes for correct audio metering logic.
 
 ---
 
-## 15. VoxGraph
+## 23. Keyboard
 
-Базовый компонент для:
-
-- waveform;
-- filter response;
-- ADSR;
-- modulation;
-- envelopes;
-- automation preview.
-
-Стиль:
-
-```text
-background  bg.graph
-grid        subtle / low-opacity
-curve       accent.primary
-curve width 1.5–2 px
-nodes       6–8 px
-```
-
-Fill:
-
-- допустим слабый cyan gradient;
-- запрещены тяжёлые декоративные заливки.
-
----
-
-## 16. Envelope graphs
-
-Компонент:
-
-```text
-VoxEnvelopeGraph
-```
-
-Должен:
-
-- отображать A/D/S/R;
-- обновляться при изменении параметров;
-- использовать единую геометрию;
-- поддерживать interactive points только если это предусмотрено функционально;
-- не дублировать DSP-state отдельно от parameter state.
-
----
-
-## 17. Filter graph
-
-Компонент:
-
-```text
-VoxFilterGraph
-```
-
-Должен визуализировать:
-
-- cutoff;
-- resonance;
-- filter type;
-- slope.
-
-График должен отражать реальное состояние параметров, а не быть декоративной анимацией.
-
----
-
-## 18. Piano keyboard
-
-Базовый компонент:
+Base component:
 
 ```text
 VoxKeyboard
 ```
 
-Можно использовать `juce::MidiKeyboardComponent` как функциональную основу, но внешний вид должен быть кастомизирован.
+`juce::MidiKeyboardComponent` may be used as a functional foundation, but appearance must conform to VOX UI.
 
-Белые клавиши:
-
-```text
-#EBEEF0
-```
-
-Чёрные:
+Reference key colours:
 
 ```text
-#081018
+white     #EBEEF0
+black     #081018
+pressed   accent
 ```
 
-Pressed:
+Keyboard height target:
 
 ```text
-accent.primary
+112–132 px at 100% reference scale
 ```
 
-Допускаются подписи:
-
-```text
-C1
-C2
-C3
-...
-```
+Octave labels may be shown where useful.
 
 ---
 
-## 19. Общие состояния компонентов
+## 24. Electronic Engine layout contract
 
-Каждый интерактивный компонент обязан поддерживать:
-
-```text
-Normal
-Hover
-Pressed
-Focused
-Active
-Disabled
-```
-
-Рекомендуемая логика:
+Top-level product composition:
 
 ```text
-Normal:
-  border = border.default
-
-Hover:
-  border = accent.dim
-
-Focused / Active:
-  border = accent.primary
-
-Disabled:
-  opacity ≈ 0.35
-  text = text.muted
+PluginEditor / Standalone shell
+|
++-- GlobalHeader
++-- InstrumentRack / Part selector
++-- PartHeader
++-- MainNavigation
++-- ActivePage
+`-- optional Keyboard / performance strip
 ```
 
-Запрещено придумывать состояния локально.
+Typical Sound page composition:
+
+```text
++----------------+----------------+----------------+
+| Oscillator     | Filter         | Envelope       |
++----------------+----------------+----------------+
+| Drive          | Accent         | Performance    |
++-------------------------+-------------------------+
+| Modulation              | Matrix                  |
++---------------------------------------------------+
+| Keyboard / Performance                            |
++---------------------------------------------------+
+```
+
+The exact responsive arrangement may change with available width, but section priority and component identity must remain stable.
 
 ---
 
-## 20. Основная layout-архитектура
+## 25. Responsive degradation order
 
-Верхний уровень:
+When space becomes constrained, adapt in this order:
 
-```text
-PluginEditor
-│
-├── TopBar
-├── InstrumentRack
-├── InstrumentHeader
-├── MainTabBar
-└── ActivePage
-```
+1. reduce flexible whitespace to token minimums;
+2. reduce optional metadata density;
+3. reflow secondary controls within panels;
+4. stack secondary panels;
+5. allow deliberate scrolling in a defined content region;
+6. hide only explicitly optional secondary information.
 
-Main area для `Sound`:
+Never:
 
-```text
-┌──────────────┬───────────────┬──────────────┐
-│ Oscillator   │ Filter        │ Envelope     │
-├──────────────┼───────────────┼──────────────┤
-│ Drive        │ Accent        │ Performance  │
-├───────────────────────┬─────────────────────┤
-│ Modulation            │ Matrix              │
-├─────────────────────────────────────────────┤
-│ Keyboard                                    │
-└─────────────────────────────────────────────┘
-```
+- clip primary parameter controls;
+- overlap controls;
+- shrink text below readable hierarchy;
+- hide active/critical state;
+- silently remove essential functionality.
 
 ---
 
-## 21. Рекомендуемая C++ структура
+## 26. Realtime safety
 
-```text
-Source/
-└── UI/
-    ├── Design/
-    │   ├── Tokens.h
-    │   ├── Typography.h
-    │   └── VoxLookAndFeel.h/.cpp
-    │
-    ├── Components/
-    │   ├── VoxPanel.h/.cpp
-    │   ├── VoxKnob.h/.cpp
-    │   ├── VoxButton.h/.cpp
-    │   ├── VoxComboBox.h/.cpp
-    │   ├── VoxTabBar.h/.cpp
-    │   ├── VoxGraph.h/.cpp
-    │   ├── VoxInstrumentSlot.h/.cpp
-    │   ├── VoxKeyboard.h/.cpp
-    │   └── ...
-    │
-    ├── Pages/
-    │   ├── SoundPage.h/.cpp
-    │   ├── PatternPage.h/.cpp
-    │   ├── RoutingPage.h/.cpp
-    │   ├── ZonesPage.h/.cpp
-    │   ├── MacrosPage.h/.cpp
-    │   └── AdvancedPage.h/.cpp
-    │
-    └── Panels/
-        ├── OscillatorPanel.h/.cpp
-        ├── FilterPanel.h/.cpp
-        ├── EnvelopePanel.h/.cpp
-        ├── DrivePanel.h/.cpp
-        ├── AccentPanel.h/.cpp
-        ├── PerformancePanel.h/.cpp
-        ├── ModulationPanel.h/.cpp
-        └── MatrixPanel.h/.cpp
-```
+UI must never:
 
----
+- perform heavy work in the audio callback;
+- take blocking locks on the audio thread;
+- allocate memory in realtime paths for rendering purposes;
+- perform disk I/O from the audio thread;
+- directly read unsafe mutable DSP state.
 
-## 22. JUCE implementation rules
-
-### 22.1 LookAndFeel
-
-Вся базовая визуальная кастомизация должна идти через:
-
-```cpp
-class VoxLookAndFeel : public juce::LookAndFeel_V4
-```
-
-В частности:
-
-```text
-drawRotarySlider
-drawButtonBackground
-drawComboBox
-drawToggleButton
-drawLinearSlider
-drawPopupMenuItem
-```
-
-Локальная отрисовка допустима для специализированных компонентов.
-
-### 22.2 Parameter bindings
-
-Параметры UI должны привязываться к параметрам процессора через стандартные attachment-механизмы там, где это применимо.
-
-Пример:
-
-```cpp
-juce::AudioProcessorValueTreeState::SliderAttachment
-```
-
-UI не должен хранить независимую «копию истины» для параметров DSP.
-
-### 22.3 Realtime safety
-
-UI никогда не должен:
-
-- выполнять тяжёлые вычисления в audio callback;
-- брать блокирующие mutex на audio thread;
-- выделять память в realtime path;
-- читать графические данные напрямую из небезопасного mutable DSP-state;
-- инициировать disk I/O из audio thread.
-
-Для визуализации realtime state использовать безопасный bridge:
+Use safe bridges such as:
 
 ```text
 atomics
-lock-free snapshot
-timer-driven UI polling
-safe message-thread update
+lock-free snapshots
+message-thread updates
+timer-driven polling
+bounded queues where appropriate
 ```
 
----
-
-## 23. Layout rules
-
-Запрещено использовать абсолютные координаты как основной подход для всего интерфейса.
-
-Разрешено:
-
-- относительные layout calculations;
-- reusable layout helpers;
-- nested rectangles;
-- flex/grid abstraction;
-- пропорциональное распределение;
-- scale-aware geometry.
-
-Пример допустимого подхода:
-
-```cpp
-auto area = getLocalBounds().reduced(12);
-auto row = area.removeFromTop(100);
-
-layoutKnob(cutoff,    row.removeFromLeft(72));
-layoutKnob(resonance, row.removeFromLeft(72));
-layoutKnob(keyTrack,  row.removeFromLeft(72));
-layoutKnob(envAmount, row.removeFromLeft(72));
-```
+Visual state must never compromise audio stability.
 
 ---
 
-## 24. Запрещённые практики
+## 27. Parameter-state authority
 
-Агент НЕ ДОЛЖЕН:
+UI must not keep an independent duplicate copy of DSP parameter truth.
 
-- добавлять новые цвета без design token;
-- использовать разные стили ручек на разных страницах;
-- использовать emoji как UI-icons;
-- строить весь интерфейс на абсолютных координатах;
-- локально менять typography;
-- создавать собственные random radii;
-- добавлять glow повсеместно;
-- использовать decorative gradient без функциональной причины;
-- копировать JUCE default look;
-- смешивать DSP-код и отрисовку;
-- изменять visual language отдельного инструмента;
-- создавать новые reusable controls внутри конкретной страницы;
-- дублировать parameter state;
-- выполнять UI работу в realtime audio thread.
+Graphs and labels should derive from the same canonical model/parameter state as their corresponding controls.
+
+A graph that visually disagrees with the audible parameter state is a defect.
 
 ---
 
-## 25. Иконки
+## 28. Accessibility and usability
 
-Иконки должны быть:
+Required:
 
-- vector-based;
-- единообразными по stroke;
-- без emoji;
-- без случайной стилистики.
+- every non-obvious control has a tooltip;
+- parameter controls expose text values;
+- critical states are not colour-only;
+- minimum hit target is respected;
+- disabled state is visually obvious;
+- focus is visible;
+- knob drag/fine-adjust/reset semantics are global;
+- popup/select behavior is consistent;
+- labels do not truncate silently when they communicate critical state.
 
-Предпочтительно:
+---
+
+## 29. Elevation and overlays
+
+Elevation levels:
 
 ```text
-SVG / juce::Drawable
+0 base
+1 raised
+2 overlay
+3 modal
 ```
 
-Базовая толщина stroke:
+These are hierarchy levels, not permission for Material-style heavy shadows.
+
+Use elevation primarily through surface value, border strength and controlled overlay treatment.
+
+---
+
+## 30. Forbidden practices
+
+Do not:
+
+- add local hardcoded colours when a semantic token exists;
+- create a second palette inside `libs/ui` or `apps/*`;
+- create different knob skins for Bass/Lead/Acid/Atmos;
+- use emoji as icons;
+- build the complete UI from absolute coordinates;
+- introduce random font sizes;
+- introduce random radii or spacing values;
+- use glow everywhere;
+- use heavy decorative gradients;
+- copy default JUCE appearance unchanged;
+- mix DSP algorithms with UI painting code;
+- duplicate parameter truth;
+- perform GUI work in the realtime thread;
+- create shared primitives inside a product page;
+- place new canonical UI architecture under `Source/UI`;
+- change family visual language in one instrument without a design-system revision.
+
+---
+
+## 31. New-component promotion rule
+
+If a required visual control does not exist:
+
+1. classify it as family primitive, family audio primitive, product widget or page;
+2. implement it in the correct ownership layer;
+3. add or extend tokens first if new reusable visual semantics are required;
+4. document the contract;
+5. then consume it in product UI.
+
+New UI code extends the system; it does not bypass the system.
+
+---
+
+## 32. Definition of Done — shared component
+
+A shared component is complete when:
+
+- it uses semantic tokens;
+- it has documented geometry;
+- applicable states are implemented;
+- focus is visible;
+- disabled state is correct;
+- resize/scale behavior is deterministic;
+- no private palette exists;
+- interaction follows global contracts;
+- parameter components expose readable value text;
+- realtime safety is preserved;
+- screenshot/deterministic rendering coverage exists where project infrastructure permits.
+
+---
+
+## 33. Definition of Done — product widget/page
+
+A product widget/page is complete when:
+
+- it composes VOX components instead of duplicating them;
+- layout follows token spacing;
+- it works at 75/100/125/150/200%;
+- there is no visual overflow or control overlap;
+- all controls bind to real functionality or are explicitly marked unavailable;
+- graphs reflect real state;
+- active/disabled/focus states are correct;
+- no local theme fork exists;
+- application/DSP behavior is unchanged unless explicitly part of the task.
+
+---
+
+## 34. UI implementation phases
+
+### DS-1 — Architecture cleanup
+
+Complete when:
+
+- `libs/vox-ui` is the only family design-system source;
+- `libs/ui` owns Electronic Engine UI;
+- `apps/*` remains shell-only;
+- `Source/UI` is forbidden for new work;
+- docs agree on dependency direction.
+
+### DS-2 — Foundation tokens
+
+Complete when token families cover:
 
 ```text
-1.5–2 px
+colour
+spacing
+radius
+stroke
+opacity
+size
+focus
+graph
+meter
+interaction
+elevation
 ```
 
----
+### DS-3 — Component state matrix
 
-## 26. Visual hierarchy
-
-Приоритеты:
-
-1. текущий инструмент;
-2. активная вкладка;
-3. realtime/critical state;
-4. primary parameters;
-5. secondary parameters;
-6. metadata / hints.
-
-Нельзя делать все элементы одинаково яркими.
-
----
-
-## 27. Accessibility / usability
-
-Минимальные требования:
-
-- все controls должны иметь tooltip;
-- параметр должен иметь текстовое значение;
-- critical states нельзя показывать только цветом;
-- hit target не должен быть меньше визуального control area;
-- disabled control должен быть визуально очевиден;
-- drag sensitivity knobs должна быть единообразной;
-- double-click reset должен быть одинаков для всех параметрических controls;
-- modifier behaviour должен быть глобально согласован.
-
----
-
-## 28. Interaction rules
-
-Для knobs:
+Define exact states for:
 
 ```text
-Drag — единый режим по всему UI
-Double click — reset to default
-Shift + drag — fine adjustment
-Mouse wheel — optional, но единообразно
-Right click — context / MIDI Learn при наличии
-```
-
-Для dropdown:
-
-```text
-Click — open
-Escape — close
-Keyboard navigation — желательно
-```
-
-Для tabs:
-
-```text
-Single click — switch page
-No destructive state change
-```
-
----
-
-## 29. Instrument-page contract
-
-Каждый инструмент обязан предоставлять UI через унифицированный контракт.
-
-Минимально:
-
-```text
-Title
-Subtitle / engine name
-Channel
-Preset selector
-Power state
-Primary page controls
-Optional graph
-Optional performance controls
-Optional modulation section
-```
-
-Инструмент не должен менять глобальную layout-систему.
-
----
-
-## 30. Definition of Done для нового UI-компонента
-
-Компонент считается готовым, если:
-
-- использует design tokens;
-- поддерживает все необходимые состояния;
-- работает при масштабировании;
-- не содержит случайных hardcoded цветов;
-- не содержит локальной дублированной темы;
-- имеет deterministic layout;
-- не зависит от DSP implementation details;
-- корректно работает при resize;
-- не создаёт realtime-safety проблем;
-- имеет минимум один UI test / screenshot test / deterministic rendering check, если инфраструктура проекта позволяет.
-
----
-
-## 31. Definition of Done для страницы
-
-Страница считается готовой, если:
-
-- собрана только из стандартных VOX-компонентов;
-- соответствует общей сетке;
-- работает при 75/100/125/150/200%;
-- не имеет visual overflow;
-- все controls связаны с реальными параметрами;
-- значения обновляются в обе стороны;
-- active/disabled states корректны;
-- отсутствуют элементы-заглушки без явной маркировки;
-- отсутствуют fake graphs, не отражающие реальное состояние.
-
----
-
-## 32. Этапы внедрения
-
-### Phase UI-1 — Foundation
-
-Создать:
-
-```text
-Tokens
-Typography
-VoxLookAndFeel
-VoxPanel
 VoxKnob
+VoxLinearSlider
 VoxButton
+VoxToggle
 VoxComboBox
 VoxTabBar
+VoxTextInput
+VoxIconButton
 ```
 
-Acceptance:
+### DS-4 — Layout/grid
 
-- отдельный component showcase;
-- visual consistency;
-- resize works.
+Finalize responsive shell, page/panel contracts and degradation behavior.
 
-### Phase UI-2 — Reference Panel
+### DS-5 — Interaction/input
 
-Полностью реализовать:
+Finalize mouse, wheel, keyboard, focus, context-menu and MIDI-learn conventions.
 
-```text
-FilterPanel
-```
+### DS-6 — Audio visualizations
 
-Содержимое:
+Finalize graph, analyzer, meter, modulation and envelope language.
 
-```text
-filter type
-filter graph
-cutoff
-resonance
-key track
-env amount
-power
-```
+### DS-7 — Product patterns
 
-Это эталонная панель для всей системы.
+Finalize rack, preset, synth-panel, sequencer, routing and zone patterns.
 
-### Phase UI-3 — Sound Page
+### DS-8 — Showcase and visual acceptance
 
-Реализовать:
-
-```text
-Oscillator
-Filter
-Envelope
-Drive
-Accent
-Performance
-```
-
-### Phase UI-4 — Modulation + Matrix
-
-Добавить:
-
-```text
-Envelope tabs
-LFO tabs
-Step modulation
-Matrix
-```
-
-### Phase UI-5 — Instrument Rack
-
-Добавить:
-
-```text
-16 slots
-active state
-empty state
-channel
-power
-instrument identity
-```
-
-### Phase UI-6 — Keyboard
-
-Интегрировать:
-
-```text
-VoxKeyboard
-Pitch
-Mod
-Velocity controls
-MIDI Learn
-```
-
-### Phase UI-7 — Remaining Pages
-
-```text
-Pattern
-Routing
-Zones
-Macros
-Advanced
-```
+Create a deterministic component showcase/reference scene and use it for visual acceptance.
 
 ---
 
-## 33. Инструкция агенту
+## 35. Agent implementation contract
 
-При работе с UI агент обязан:
+For every UI change, an implementation agent must:
 
-1. Сначала прочитать этот документ.
-2. Не менять design language без отдельного решения.
-3. Не создавать локальные альтернативы существующим VOX-компонентам.
-4. При необходимости нового компонента:
-   - сначала добавить его в component library;
-   - затем использовать на страницах.
-5. После каждого UI checkpoint:
-   - обновить этот документ, если появился новый канонический token/component/rule;
-   - не менять существующий CANON молча.
-6. Не смешивать функциональный refactor DSP с UI refactor в одном checkpoint без необходимости.
-7. Каждый PR должен указывать:
-   - какие компоненты добавлены;
-   - какие tokens изменены;
-   - какие страницы изменены;
-   - какие состояния проверены;
-   - какие scale factors проверены.
-8. Скриншот/рендер после значимого UI PR обязателен.
-9. Все отклонения от design system должны быть явно описаны в PR.
+1. read this document and `VOX_UI_FAMILY_ARCHITECTURE.md` first;
+2. determine ownership before creating a new component;
+3. reuse existing VOX primitives;
+4. add new semantic tokens before hardcoding reusable visual values;
+5. avoid unrelated DSP refactors;
+6. report changed tokens/components/pages in the PR;
+7. report tested scale factors and states;
+8. provide a screenshot/render for meaningful visual changes;
+9. document any deliberate deviation from CANON;
+10. never silently fork the visual language.
 
 ---
 
-## 34. Acceptance criteria v1.0
+## 36. Foundation acceptance criteria v1.1
 
-Design System v1.0 считается внедрённой, когда:
+DS-1 + DS-2 are complete when:
 
-- существует единый `Tokens.h`;
-- существует единый `VoxLookAndFeel`;
-- базовые controls не используют default JUCE appearance;
-- `VoxKnob`, `VoxPanel`, `VoxButton`, `VoxComboBox`, `VoxTabBar` переиспользуются;
-- минимум одна полноценная панель реализована по стандарту;
-- resize и UI scaling не ломают layout;
-- отсутствуют локальные случайные стили;
-- UI не нарушает realtime safety;
-- документация актуализируется вместе с UI checkpoints.
+- canonical architecture is `apps/* -> libs/ui -> libs/vox-ui`;
+- `Source/UI` is explicitly non-canonical;
+- shared tokens live in one location;
+- semantic tokens exist for colour, spacing, radius, stroke, opacity, size, focus, graph, meter, interaction and elevation;
+- product UI has no authority to invent a second family theme;
+- documentation and code use the same ownership model;
+- the next design-system work can proceed through component state contracts rather than architectural cleanup.
 
 ---
 
-## 35. Каноническое правило
+## 37. Canonical rule
 
-> Новый UI-код должен расширять систему, а не обходить её.
-
-Если нужного визуального элемента нет — сначала создаётся стандартный компонент, после чего он используется в продукте.
-
-Это правило является обязательным для дальнейшей разработки интерфейса VOX Electronic Engine.
+> Shared visual semantics live in `libs/vox-ui`. Electronic Engine workflows live in `libs/ui`. Application shells compose them. New UI must extend this hierarchy, never bypass it.
