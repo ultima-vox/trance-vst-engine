@@ -8,7 +8,8 @@ Before making substantive changes, every coding agent must read:
 2. `agents/AGENT_CONTRACT.md`
 3. `agents/ROLES.md`
 4. `agents/PROJECT_CONTEXT.md`
-5. the active issue/specification for the task
+5. `agents/DEVELOPMENT_WORKFLOW.md`
+6. the active issue/specification for the task
 
 ## Non-negotiable execution rules
 
